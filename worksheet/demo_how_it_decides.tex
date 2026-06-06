@@ -1,0 +1,135 @@
+% Cadence wrist band — DEMO one-pager: how it decides REST / MOVE / TREMOR.
+% Deliberately NO frequency theory — this is what to show & say at the demo.
+% Build:  tectonic demo_how_it_decides.tex
+\documentclass[11pt]{article}
+
+\usepackage{fontspec}
+\setmainfont{Helvetica Neue}
+\setmonofont{Menlo}[Scale=0.88]
+
+\usepackage[a4paper, landscape, margin=1.3cm, top=1.1cm, bottom=1.0cm]{geometry}
+\usepackage{microtype}
+\usepackage{tikz}
+\usepackage[most]{tcolorbox}
+
+% ── Palette (matches the board LEDs) ─────────────────────────────────────────
+\definecolor{teal}{HTML}{0E7C7B}
+\definecolor{tealbg}{HTML}{E7F2F1}
+\definecolor{amber}{HTML}{C9760D}
+\definecolor{amberbg}{HTML}{FBEFDB}
+\definecolor{good}{HTML}{2E7D32}
+\definecolor{goodbg}{HTML}{E6F2E6}
+\definecolor{ink}{HTML}{21302F}
+\definecolor{muted}{HTML}{6B7B7A}
+\color{ink}
+\setlength{\parindent}{0pt}
+
+% NeoPixel ring icon: #1 = number of lit dots, #2 = lit colour, #3 = unlit colour
+\newcommand{\ring}[3]{%
+  \begin{tikzpicture}[scale=0.30]
+    \foreach \i in {0,...,9}{
+      \pgfmathtruncatemacro\on{\i < #1 ? 1 : 0}
+      \ifnum\on=1 \fill[#2] (36*\i:1) circle (0.30);
+      \else       \fill[#3] (36*\i:1) circle (0.30);\fi}
+  \end{tikzpicture}}
+
+\begin{document}
+
+% ── Title ────────────────────────────────────────────────────────────────────
+\begin{tcolorbox}[enhanced, colback=teal, colframe=teal, arc=4pt, boxrule=0pt,
+  left=14pt, right=14pt, top=9pt, bottom=9pt]
+  {\color{white}\huge\bfseries How the wrist band decides:\ \ REST\, $\cdot$\, MOVE\, $\cdot$\, TREMOR}\\[3pt]
+  {\color{tealbg}\normalsize No maths needed to run the demo — the band just checks two things every 2 seconds, then lights up one of three states.}
+\end{tcolorbox}
+
+\vspace{5pt}
+
+% ── Set-up + the two measurements ────────────────────────────────────────────
+\begin{tcolorbox}[enhanced, colback=amberbg, frame hidden,
+  borderline west={3pt}{0pt}{amber}, arc=2pt, left=10pt, right=10pt, top=5pt, bottom=5pt]
+  {\bfseries\color{amber!85!black}Do this first (set-up):}\ \ Hold your wrist
+  \emph{still} and press \textbf{button A}. The band learns \emph{your} normal
+  resting hand, so the ``line'' it compares against is personal to you. (Until
+  you do, the ring glows dim \textbf{white} = ``not calibrated yet''.)
+\end{tcolorbox}
+
+\vspace{6pt}
+
+{\large\bfseries Every 2 seconds, it measures two things about your wrist:}\\[5pt]
+
+\begin{tcbraster}[raster columns=2, raster column skip=6mm, raster equal height,
+  enhanced, colback=tealbg, frame hidden, borderline west={3pt}{0pt}{teal},
+  arc=2pt, left=10pt, right=10pt, top=6pt, bottom=6pt]
+  \begin{tcolorbox}
+    {\bfseries\color{teal} 1.\ Arm movement}\\[2pt]
+    Big, slow motion --- reaching, waving, walking. ``Are you using your hand
+    \emph{on purpose}?''
+  \end{tcolorbox}
+  \begin{tcolorbox}
+    {\bfseries\color{teal} 2.\ Tremor shake}\\[2pt]
+    A fast, fine, \emph{rhythmic} shake while the hand is otherwise still ---
+    the Parkinson's resting tremor.
+  \end{tcolorbox}
+\end{tcbraster}
+
+\vspace{6pt}
+
+{\large\bfseries Then it picks one of three --- checked in this order:}\\[5pt]
+
+% ── The three outcome cards (manual minipages + equal height group) ──────────
+\begin{minipage}[t]{0.323\textwidth}
+  \begin{tcolorbox}[enhanced, equal height group=cards, colframe=teal,
+    colback=tealbg, colbacktitle=teal, arc=4pt, boxrule=1pt,
+    left=10pt, right=10pt, top=7pt, bottom=7pt,
+    fonttitle=\bfseries\large\color{white}, title={\,1\ \ \ MOVE}]
+    {\bfseries Arm is moving about.}\hfill\raisebox{-4pt}{\ring{10}{teal!60}{teal!60}}\\[4pt]
+    You're doing something on purpose. A resting tremor only shows \emph{at
+    rest}, so the band stays quiet --- no false alarms on normal activity.
+    \\[5pt]
+    {\footnotesize\color{muted}\textbf{You'll see:} dim \textbf{teal} ring\, $\cdot$\, screen says \emph{moving}}
+  \end{tcolorbox}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.323\textwidth}
+  \begin{tcolorbox}[enhanced, equal height group=cards, colframe=amber,
+    colback=amberbg, colbacktitle=amber, arc=4pt, boxrule=1pt,
+    left=10pt, right=10pt, top=7pt, bottom=7pt,
+    fonttitle=\bfseries\large\color{white}, title={\,2\ \ \ TREMOR}]
+    {\bfseries Still, but shaking past your line.}\hfill\raisebox{-4pt}{\ring{6}{amber}{black!12}}\\[4pt]
+    Hand at rest \emph{and} trembling more than your calibrated normal --- so it
+    flags a tremor. Stronger shake $\rightarrow$ more lights fill the ring.
+    \\[5pt]
+    {\footnotesize\color{muted}\textbf{You'll see:} \textbf{amber} bar (length = strength)\, $\cdot$\, screen says \emph{TREMOR present}}
+  \end{tcolorbox}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.323\textwidth}
+  \begin{tcolorbox}[enhanced, equal height group=cards, colframe=good,
+    colback=goodbg, colbacktitle=good, arc=4pt, boxrule=1pt,
+    left=10pt, right=10pt, top=7pt, bottom=7pt,
+    fonttitle=\bfseries\large\color{white}, title={\,3\ \ \ REST}]
+    {\bfseries Still and calm.}\hfill\raisebox{-4pt}{\ring{10}{good}{good}}\\[4pt]
+    No big movement, no tremor shake --- nothing going on. All clear. The default
+    whenever the other two aren't true.
+    \\[5pt]
+    {\footnotesize\color{muted}\textbf{You'll see:} soft \textbf{green} ring\, $\cdot$\, screen says \emph{no tremor}}
+  \end{tcolorbox}
+\end{minipage}
+
+\vspace{6pt}
+
+% ── Demo script + honest footnote ────────────────────────────────────────────
+\begin{tcolorbox}[enhanced, colback=white, colframe=ink!70, boxrule=0.8pt, arc=3pt,
+  left=12pt, right=12pt, top=7pt, bottom=7pt]
+  {\large\bfseries Show it in three moves:}\quad
+  \textbf{1.} Hold still $\rightarrow$ \textbf{\color{good}REST} (green).\quad
+  \textbf{2.} Wave your hand around $\rightarrow$ \textbf{\color{teal}MOVE} (teal).\quad
+  \textbf{3.} Rest your hand and shake it fast $\rightarrow$ \textbf{\color{amber!85!black}TREMOR} (amber).
+\end{tcolorbox}
+
+\vspace{4pt}
+{\footnotesize\color{muted}\textbf{If someone asks ``how does it know?''} --- the
+one-line answer: \emph{``It measures how strongly the hand shakes at a tremor's
+rhythm, and whether you're otherwise still.''} (Under the hood that's the
+strength of 4--6\,Hz shaking, and it waits for two readings in a row before
+switching --- but you don't need to say any of that to run the demo.)}
+
+\end{document}

@@ -1,0 +1,318 @@
+\section{Sensing: The Accelerometer \& Data Acquisition}
+\label{sec:sensing}
+
+Everything Cadence knows about a wearer's gait arrives through a single channel: the
+motion of one ankle, measured many times a second. Before any spectral analysis,
+freeze index, or neural network can run, that motion must be turned into clean, evenly
+spaced numbers. This section explains the sensor that does it --- the LIS3DH MEMS
+accelerometer on the Circuit Playground Express (CPX) --- and the disciplined,
+drift-free loop on the SAMD21 microcontroller that samples it. The choices here
+(which axes, what range, how fast, what units) set the ceiling on everything
+downstream, so they deserve to be understood from first principles.
+
+\subsection{What a MEMS accelerometer actually measures}
+
+A MEMS (Micro-Electro-Mechanical System) accelerometer is, quite literally, a
+microscopic spring--mass system etched into silicon. A tiny proof mass is suspended
+on flexible silicon beams that behave as springs. When the chip accelerates, the mass
+lags behind by inertia and the beams flex; that deflection is read out
+\emph{capacitively}. The moving mass carries interleaved fingers that sit between
+fixed fingers, forming a pair of capacitors. As the mass shifts by a few nanometres,
+one gap narrows and the other widens, the capacitances change in opposite directions,
+and the chip's analogue front end converts that differential capacitance into a
+digital number proportional to acceleration along that axis.
+
+\begin{intuition}
+Picture a ball on a spring inside a sealed box. Shake the box and the ball swings;
+how far it swings tells you how hard you shook. A MEMS accelerometer is that toy
+shrunk onto a grain of silicon, with the ``how far'' read not by eye but by measuring
+a capacitance. Crucially, it cannot tell ``being pushed'' from ``resting in
+gravity'': sitting still on a table, the proof mass still sags under its own weight,
+so the sensor always reports a steady $\approx\SI{1}{g}$ pull. That ever-present
+offset is a feature we exploit later, not a fault.
+\end{intuition}
+
+The LIS3DH integrates three such structures at right angles, giving acceleration
+along three orthogonal axes $a_x, a_y, a_z$ simultaneously. We mount it in an ankle
+sleeve, so the axes are fixed to the leg rather than to the world. Figure~\ref{fig:axes}
+shows the convention: one axis runs roughly vertically (and so carries most of
+gravity when standing), one along the direction of travel, and one across the body.
+Because a sleeve can be donned at slightly different angles each day, we never trust
+any single axis on its own --- the orientation is not guaranteed. The remedy is the
+magnitude $a=\sqrt{a_x^2+a_y^2+a_z^2}$, introduced in the next section, which is
+identical no matter how the device is rotated.
+
+% ---------------------------------------------------------------------------
+\begin{figure}[H]
+\centering
+\resizebox{0.95\textwidth}{!}{%
+\begin{tikzpicture}[font=\small,>=Latex]
+
+  % ---- LEFT: leg + ankle axes ----
+  \begin{scope}[shift={(0,0)}]
+    % stylised lower leg (kept narrow + to the left so the axis triad has clear space)
+    \fill[mist] (-0.45,0) -- (0.45,0) -- (0.32,4.2) -- (-0.32,4.2) -- cycle;
+    \draw[rule,thick] (-0.45,0) -- (0.45,0) -- (0.32,4.2) -- (-0.32,4.2) -- cycle;
+    % foot
+    \fill[mist] (-0.45,0) -- (1.55,0) -- (1.55,-0.45) -- (-0.45,-0.45) -- cycle;
+    \draw[rule,thick] (-0.45,0) -- (1.55,0) -- (1.55,-0.45) -- (-0.45,-0.45) -- cycle;
+    \node[mute,font=\footnotesize] at (0.9,-0.74) {foot};
+    \node[mute,font=\footnotesize,rotate=90] at (-0.82,2.35) {lower leg};
+
+    % sleeve band
+    \fill[paleteal,opacity=0.9] (-0.42,0.7) rectangle (0.40,1.65);
+    \draw[teal,thick] (-0.42,0.7) rectangle (0.40,1.65);
+    % sensor board
+    \fill[teal] (-0.18,0.99) rectangle (0.18,1.35);
+    \node[white,font=\scriptsize\bfseries] at (0,1.17) {CPX};
+    % callout label to the lower-left with a thin leader (clear of the triad)
+    \node[teal,font=\footnotesize,anchor=east] at (-1.05,0.55) {ankle sleeve};
+    \draw[teal,thin] (-0.95,0.6) -- (-0.42,0.95);
+
+    % axis triad anchored at the board, opening to the RIGHT into empty space
+    \coordinate (O) at (0,1.17);
+    \draw[->,teal,very thick]  (O) -- ++(0,1.75)    node[above,teal,font=\footnotesize]{$z$ (vertical, gravity)};
+    \draw[->,steel,very thick] (O) -- ++(2.0,0)     node[right,steel,font=\footnotesize]{$x$ (forward)};
+    \draw[->,navy,very thick]  (O) -- ++(1.0,-0.78) node[below right,navy,font=\footnotesize]{$y$ (lateral)};
+  \end{scope}
+
+  % ---- RIGHT: capacitive proof-mass schematic ----
+  \begin{scope}[shift={(6.6,2.0)}]
+    \node[navy,font=\bfseries] at (1.6,2.35) {Inside one axis: a capacitive spring--mass};
+    % anchors
+    \fill[mute] (-0.2,1.6) rectangle (0.2,1.85);
+    \fill[mute] (3.0,1.6) rectangle (3.4,1.85);
+    \fill[mute] (-0.2,-1.85) rectangle (0.2,-1.6);
+    \fill[mute] (3.0,-1.85) rectangle (3.4,-1.6);
+    % springs (zig-zag)
+    \draw[ink,thick] (0,1.6) -- (0.25,1.3) -- (-0.05,1.0) -- (0.25,0.7) -- (0.1,0.45);
+    \draw[ink,thick] (3.2,1.6) -- (2.95,1.3) -- (3.25,1.0) -- (2.95,0.7) -- (3.1,0.45);
+    \draw[ink,thick] (0,-1.6) -- (0.25,-1.3) -- (-0.05,-1.0) -- (0.25,-0.7) -- (0.1,-0.45);
+    \draw[ink,thick] (3.2,-1.6) -- (2.95,-1.3) -- (3.25,-1.0) -- (2.95,-0.7) -- (3.1,-0.45);
+    % proof mass (movable)
+    \fill[palenavy] (0.1,-0.45) rectangle (3.1,0.45);
+    \draw[navy,very thick] (0.1,-0.45) rectangle (3.1,0.45);
+    \node[navy,font=\scriptsize\bfseries] at (1.6,0) {proof mass};
+    % moving fingers
+    \foreach \x in {0.5,1.1,1.7,2.3,2.9}{
+      \fill[navy] (\x,0.45) rectangle (\x+0.10,0.95);
+      \fill[navy] (\x,-0.95) rectangle (\x+0.10,-0.45);
+    }
+    % fixed fingers (offset) -- top = C1, bottom = C2
+    \foreach \x in {0.8,1.4,2.0,2.6}{
+      \fill[teal] (\x,0.55) rectangle (\x+0.10,1.05);
+      \fill[freeze] (\x,-1.05) rectangle (\x+0.10,-0.55);
+    }
+    \node[teal,right] at (3.25,0.8) {\footnotesize $C_1$};
+    \node[freeze,right] at (3.25,-0.8) {\footnotesize $C_2$};
+    % acceleration arrow
+    \draw[->,amber,very thick] (1.6,1.45) -- (1.6,1.15);
+    \node[amber,right] at (1.75,1.3) {\footnotesize mass lags $\Rightarrow$ $C_1\!\neq\!C_2$};
+    \node[mute,align=center] at (1.6,-2.25)
+      {\footnotesize deflection of a few nm $\to$ differential capacitance $\to$ digital count};
+  \end{scope}
+\end{tikzpicture}}
+\caption{Left: the LIS3DH is worn in an ankle sleeve, fixing its three orthogonal
+axes to the leg --- $z$ vertical (and so loaded by gravity at rest), $x$ forward,
+$y$ lateral. Right: along each axis a silicon proof mass on spring beams deflects
+under acceleration, unbalancing a pair of capacitors $C_1, C_2$; that differential
+capacitance is digitised. Because the sleeve's orientation is not guaranteed day to
+day, Cadence never trusts a single axis and instead works from the rotation-invariant
+magnitude.}
+\label{fig:axes}
+\end{figure}
+
+\subsection{Range: why \texorpdfstring{$\pm\SI{8}{g}$}{+/-8 g} and not \texorpdfstring{$\pm\SI{2}{g}$}{+/-2 g}}
+
+The LIS3DH can be configured for several full-scale ranges. A smaller range gives
+finer resolution per count, which is tempting --- but a range that is too small
+\emph{clips}: any acceleration beyond the limit is recorded as a flat-topped maximum,
+destroying exactly the peaks we care about. Walking is not gentle. Each
+\emph{heel strike} sends a sharp impulse up the leg that comfortably exceeds
+$\pm\SI{2}{g}$. If we ran at $\pm\SI{2}{g}$, those impacts would saturate the sensor,
+flattening the very spikes that distinguish vigorous gait from a freeze. We therefore
+run the LIS3DH at $\pm\SI{8}{g}$, which leaves clean headroom above every heel strike.
+
+\begin{takeaway}
+A heel strike exceeds $\pm\SI{2}{g}$, so the small range would clip. Cadence runs at
+$\pm\SI{8}{g}$ --- never trading dynamic range for resolution when the peaks are the
+signal.
+\end{takeaway}
+
+Figure~\ref{fig:capture} is real data from the worksheet capture (\code{capture1.csv},
+\SI{64}{Hz}, \SI{41.4}{s}). The top trace is the acceleration magnitude in milli-$g$.
+Two facts jump out and tie directly to the choices in this section. First, the
+baseline sits near $\SI{1000}{mg}$ even when the wearer is still --- that is the
+$\approx\SI{1}{g}$ of gravity the proof mass always feels, the DC offset we remove
+before spectral analysis. Second, during the freeze phase the magnitude swings to
+roughly $\SI{3500}{mg}$, far above $\SI{2000}{mg}$: had the range been $\pm\SI{2}{g}$
+those excursions would have been sheared flat at the rail.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\linewidth]{capture1_trace}
+\caption{Real \SI{64}{Hz} capture (\code{capture1.csv}, \SI{41.4}{s}). Top: the
+acceleration magnitude $\norm{a}$ in milli-$g$, sitting on a $\approx\SI{1000}{mg}$
+gravity baseline; the freeze phase drives it well past $\SI{2000}{mg}$, which a
+$\pm\SI{2}{g}$ range would clip. Bottom: the corresponding Freeze Index, computed
+downstream from this same magnitude (Section~\ref{sec:sensing} feeds it). The sensor's
+job is to deliver these excursions \emph{without saturating}; the analysis that turns
+them into a verdict comes later.}
+\label{fig:capture}
+\end{figure}
+
+\subsection{Sampling rate, Nyquist, and why \texorpdfstring{\SI{64}{Hz}}{64 Hz} is plenty}
+
+Cadence samples all three axes at $f_s=\SI{64}{Hz}$ --- 64 fresh readings per second.
+The right way to judge whether that is fast enough is the Nyquist--Shannon sampling
+theorem: a sampled signal can faithfully represent frequencies only up to half the
+sampling rate. Here the Nyquist frequency is $f_s/2 = \SI{32}{Hz}$. Every frequency
+band Cadence cares about sits far below that ceiling: the locomotor (walking-rhythm)
+band at \SIrange{0.5}{3}{Hz}, the freeze band at \SIrange{3}{8}{Hz}, and the
+rest-tremor band at \SIrange{4}{6}{Hz}. The highest of these tops out at \SI{8}{Hz},
+four times below Nyquist (Figure~\ref{fig:nyquist}). There is comfortable margin, and
+no aliasing of the freeze signature into a misleading frequency.
+
+\begin{mathsbox}
+\textbf{Nyquist, in one line.} To capture a frequency $f$ without aliasing you must
+sample faster than twice it:
+\begin{equation}
+f_s > 2 f_{\max}
+\qquad\Longleftrightarrow\qquad
+f_{\max} < \frac{f_s}{2} \;=\; \frac{\SI{64}{Hz}}{2} \;=\; \SI{32}{Hz}.
+\label{eq:nyquist}
+\end{equation}
+Our highest band of interest is \SI{8}{Hz}. Since $8 < 32$ with a factor of four to
+spare, \SI{64}{Hz} represents the \SIrange{3}{8}{Hz} freeze trembling exactly.
+Sample \emph{too slowly} --- say below \SI{16}{Hz} --- and an \SI{8}{Hz} tremor would
+fold down (\emph{alias}) to a lower, fictitious frequency and corrupt the Freeze
+Index. \SI{64}{Hz} avoids that entirely while keeping data rates and on-board compute
+modest.
+\end{mathsbox}
+
+\begin{figure}[H]
+\centering
+\resizebox{0.95\textwidth}{!}{%
+\begin{tikzpicture}[font=\small]
+\begin{axis}[
+    width=14cm, height=5.2cm,
+    xmin=0, xmax=34, ymin=0, ymax=1.25,
+    xlabel={frequency (Hz)}, ylabel={},
+    ytick=\empty,
+    axis y line=none,
+    axis x line=bottom,
+    xtick={0,3,6,8,16,32},
+    xticklabel style={font=\footnotesize},
+    every axis x label/.style={at={(axis description cs:0.5,-0.16)},anchor=north},
+    clip=false,
+]
+  % locomotor band 0.5-3
+  \addplot[draw=none,fill=steel,fill opacity=0.30] coordinates {(0.5,0)(3,0)(3,1)(0.5,1)} \closedcycle;
+  % freeze band 3-8
+  \addplot[draw=none,fill=freeze,fill opacity=0.28] coordinates {(3,0)(8,0)(8,1)(3,1)} \closedcycle;
+  % rest-tremor band 4-6 (overlaps freeze) -- hatch
+  \addplot[draw=none,fill=purple,fill opacity=0.22] coordinates {(4,0)(6,0)(6,0.62)(4,0.62)} \closedcycle;
+
+  % band labels -- each centred over its OWN band on a separate baseline so they never collide
+  \node[steel,font=\footnotesize\bfseries,align=center,anchor=south] at (axis cs:1.75,1.30) {locomotor\\\SIrange{0.5}{3}{Hz}};
+  \node[freeze,font=\footnotesize\bfseries,align=center,anchor=south] at (axis cs:5.5,1.00) {freeze\\\SIrange{3}{8}{Hz}};
+  \node[purple,font=\footnotesize,align=center] at (axis cs:5.0,0.42) {rest\\tremor};
+
+  % Nyquist line
+  \draw[navy,very thick,dashed] (axis cs:32,0) -- (axis cs:32,1.15);
+  \node[navy,font=\footnotesize\bfseries,align=center,anchor=south] at (axis cs:32,1.16)
+     {Nyquist\\$f_s/2=\SI{32}{Hz}$};
+
+  % headroom brace from 8 to 32
+  \draw[<->,amber,thick] (axis cs:8,0.30) -- (axis cs:32,0.30);
+  \node[amber,font=\footnotesize] at (axis cs:20,0.40) {comfortable margin};
+\end{axis}
+\end{tikzpicture}}
+\caption{Where the action is, against the sampling ceiling. All three bands Cadence
+analyses lie below \SI{8}{Hz}; the Nyquist frequency for \SI{64}{Hz} sampling is
+\SI{32}{Hz}, leaving a four-fold margin so nothing aliases. (The rest-tremor band
+\SIrange{4}{6}{Hz} sits inside the freeze band.)}
+\label{fig:nyquist}
+\end{figure}
+
+\subsection{Units and the gravity offset}
+
+On the device the SAMD21 works in SI units, $\si{m/s^2}$, because that is what the
+LIS3DH driver returns. On the host side we convert to milli-$g$ ($\SI{1}{g}\approx
+\SI{9.81}{m/s^2}$, so $\SI{1}{mg}\approx\SI{9.81e-3}{m/s^2}$) because milli-$g$ is the
+natural language of human movement: a still limb reads $\approx\SI{1000}{mg}$, a brisk
+heel strike a few thousand. Whichever unit is used, one preprocessing step is
+non-negotiable. The proof mass always feels gravity, so every axis carries a constant
+$\approx\SI{1}{g}$ bias --- a strong DC component. Before any spectral analysis we
+subtract the mean of the magnitude window, removing that DC term so the power spectrum
+reflects \emph{movement}, not the constant pull of the Earth.
+
+\begin{keyidea}
+Gravity is a DC offset, not motion. Subtracting the window mean from the magnitude
+zeroes the $\approx\SI{1000}{mg}$ baseline, so the spectrum that feeds the Freeze
+Index measures how the leg is \emph{shaking}, not the fact that it is on a planet.
+Because the Freeze Index is later formed as a ratio of band powers, the choice of
+unit (mg versus g) cancels --- but the DC removal does not, and must happen first.
+\end{keyidea}
+
+\subsection{Drift-free acquisition on the SAMD21}
+
+A spectral analysis is only as honest as its time axis. If samples arrive at uneven
+intervals --- because the firmware did some I2C work, drew the OLED, or updated the
+NeoPixels in between --- the assumed \SI{64}{Hz} grid is a lie, and a \SI{6}{Hz}
+tremor can smear into the wrong bin. The classic beginner's mistake is to sample,
+then \code{delay(15)} (roughly $1/64\,\si{s}$): the delay does not account for the
+time the sampling and processing themselves took, so the true period creeps and
+\emph{drifts}.
+
+Cadence instead uses fixed-rate, non-blocking scheduling. It records the timestamp of
+the next sample that is \emph{due} and advances that target by a fixed period each
+time, rather than sleeping for a fixed period. The loop never blocks: between samples
+it is free to run the on-board detector, refresh the OLED, and drive the LED ring,
+yet a sample is taken the instant its scheduled deadline passes. Errors do not
+accumulate, because each deadline is computed from the previous \emph{target}, not
+from when the previous sample actually fired.
+
+\begin{lstlisting}[style=cpp]
+// Fixed-rate, non-blocking 64 Hz sampler on the SAMD21 (sketch)
+const uint32_t PERIOD_US = 1000000UL / 64;   // 15625 us between samples
+uint32_t next_due = micros();                // first deadline = now
+
+void loop() {
+  if ((int32_t)(micros() - next_due) >= 0) { // deadline passed?
+    next_due += PERIOD_US;                    // advance by a FIXED step
+    float ax, ay, az;
+    lis3dh_read(&ax, &ay, &az);               // m/s^2, +/-8 g range
+    push_sample(ax, ay, az);                  // into the ring buffer
+  }
+  service_detector();   // FI / gate / debounce  -- never blocks
+  service_display();    // OLED + NeoPixel ring  -- never blocks
+}
+\end{lstlisting}
+
+\begin{intuition}
+Think of it as catching a train by the clock, not by a stopwatch. ``Sleep 15 ms''
+restarts the stopwatch \emph{after} you have already spent time reading the sensor and
+drawing the screen, so each cycle runs a little long and the schedule slips. ``Take a
+sample whenever the wall clock crosses the next 15.625 ms tick'' keeps every sample
+pinned to an absolute deadline --- the timing never drifts, no matter how much work
+happens in between.
+\end{intuition}
+
+Because the advance is by a fixed \code{PERIOD\_US} computed from the target rather
+than the actual fire time, the long-run average rate stays locked to \SI{64}{Hz} and
+the time base under the Welch analysis is trustworthy. The cast to \code{int32\_t} in
+the comparison makes the deadline test robust to the microsecond counter wrapping
+around. Two firmware roles share this same acquisition core: the
+\emph{recorder} (\code{cpx\_fog\_logger.ino}) streams samples to the CPX's
+\SI{2}{MB} flash for later analysis, and the \emph{monitor}
+(\code{cpx\_fog\_standalone.ino}) feeds them straight into the live detector and
+display. The sensing front end is identical in both; only what happens to the samples
+afterwards differs.
+
+\begin{takeaway}
+One ankle accelerometer, sampled at a rock-steady \SI{64}{Hz} over $\pm\SI{8}{g}$,
+delivers gravity-baselined, alias-free motion. Get the range, rate, and timing right
+here and every downstream stage --- magnitude, spectrum, Freeze Index, dashboard ---
+inherits clean data; get them wrong and no clever analysis can recover the lost peaks.
+\end{takeaway}

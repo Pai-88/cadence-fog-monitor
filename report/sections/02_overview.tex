@@ -1,0 +1,238 @@
+\section{System Overview: The End-to-End Pipeline}
+\label{sec:overview}
+
+Before we dissect any single stage, it helps to see the whole machine at once. Cadence
+takes one stream of numbers --- the wobble of a single accelerometer strapped to the
+ankle --- and turns it, every two seconds, into one of three plain-English words:
+\textcolor{grn}{\textbf{STILL}}, \textcolor{steel}{\textbf{WALKING}}, or
+\textcolor{freeze}{\textbf{FREEZE}}. That verdict is shown on the body (a small OLED and
+a ring of coloured LEDs) and, optionally, streamed over Wi-Fi to a live laptop dashboard.
+Everything else in this report is an expansion of one of the boxes in
+Figure~\ref{fig:pipeline}.
+
+\begin{keyidea}
+Cadence is a \textbf{monitor}, not a therapy. It \emph{detects} and \emph{displays}
+freeze-of-gait episodes so they can be logged and reviewed; it never tries to cue, buzz,
+or treat the wearer. A coin vibration motor is physically present on the build but is
+\textbf{disabled in firmware} --- the only outputs are visual and on-screen.
+\end{keyidea}
+
+\subsection{The journey of one window}
+
+The pipeline is a straight line with a single branch. Signal flows left to right; the
+two analysis paths in the middle answer the same question --- \emph{is this a freeze?}
+--- in two very different ways.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.985\textwidth}{!}{%
+\begin{tikzpicture}[
+    font=\sffamily,
+    >={Stealth[length=2.6mm]},
+    block/.style={rounded corners=2pt,draw,line width=0.9pt,minimum height=12mm,
+                  minimum width=20mm,align=center,fill=white,inner sep=5pt},
+    sense/.style={block,draw=teal,fill=paleteal,text=ink},
+    compute/.style={block,draw=navy,fill=palenavy,text=ink},
+    decide/.style={block,draw=freeze,fill=palefreeze,text=ink},
+    output/.style={block,draw=grn,fill=white,text=ink},
+    flow/.style={->,line width=1.0pt,draw=mute},
+    lbl/.style={font=\scriptsize\sffamily,text=mute,align=center},
+  ]
+  % local sub-label size: one step up from \footnotesize for print legibility
+  \newcommand{\sub}{\small}
+
+  % --- main spine ---------------------------------------------------------
+  \node[sense]   (acc)  at (0,0)
+        {\textbf{Accelerometer}\\[1pt]{\sub LIS3DH, 3 axis}\\{\sub 64\,Hz, $\pm$8\,g}};
+  \node[sense]   (mag)  at (3.5,0)
+        {\textbf{Magnitude}\\[1pt]{\sub $\norm{a}$, mean-}\\{\sub removed (DC out)}};
+  \node[sense]   (win)  at (7.0,0)
+        {\textbf{Sliding window}\\[1pt]{\sub 256 samp (4\,s)}\\{\sub 50\% overlap}};
+
+  % branch hub
+  \node[compute] (fi)   at (11.0,1.7)
+        {\textbf{Welch PSD}\\{\sub band power}\\{\sub $\boldsymbol{\to}$ \textbf{Freeze Index}}};
+  \node[compute] (cnn)  at (11.0,-1.7)
+        {\textbf{FoGNet (CNN)}\\{\sub 1-D conv, $\sim$18k par}\\{\sub $\to P(\text{freeze})$}};
+
+  \node[decide]  (gate) at (15.0,0)
+        {\textbf{Energy gate}\\[1pt]{\sub movement}\\{\sub energy $>$ floor?}};
+  \node[decide]  (deb)  at (18.5,0)
+        {\textbf{Debounce}\\[1pt]{\sub assert / release}\\{\sub after 2 windows}};
+  \node[decide]  (state) at (22.0,0)
+        {\textbf{State}\\[1pt]{\sub STILL / WALK}\\{\sub / FREEZE}};
+
+  % outputs
+  \node[output]     (oled) at (25.6,1.4)
+        {\textbf{On body}\\{\sub OLED + NeoPixels}};
+  \node[output]     (dash) at (25.6,-1.4)
+        {\textbf{Dashboard}\\{\sub Wi-Fi $\to$ laptop}};
+
+  % --- arrows -------------------------------------------------------------
+  \draw[flow] (acc)  -- (mag);
+  \draw[flow] (mag)  -- (win);
+  % win -> branch
+  \draw[flow] (win.east) -- ++(0.9,0) |- (fi.west);
+  \draw[flow] (win.east) -- ++(0.9,0) |- (cnn.west);
+  % branch -> gate  (FI is the shipped path: solid; CNN: dashed)
+  \draw[flow] (fi.east)  -| ($(gate.north)+(0,0.0)$);
+  \draw[flow,dashed,draw=navy] (cnn.east) -| ($(gate.south)+(0,0.0)$);
+  \draw[flow] (gate) -- (deb);
+  \draw[flow] (deb)  -- (state);
+  \draw[flow] (state.east) -- ++(0.8,0) |- (oled.west);
+  \draw[flow] (state.east) -- ++(0.8,0) |- (dash.west);
+
+  % --- group brackets / stage labels -------------------------------------
+  \begin{scope}[on background layer]
+    \node[fit=(acc)(mag)(win),draw=teal,rounded corners,line width=0.6pt,
+          dashed,inner sep=6pt] (gsense) {};
+    \node[fit=(fi)(cnn),draw=navy,rounded corners,line width=0.6pt,
+          dashed,inner sep=6pt] (gcomp) {};
+    \node[fit=(gate)(deb)(state),draw=freeze,rounded corners,line width=0.6pt,
+          dashed,inner sep=6pt] (gdec) {};
+  \end{scope}
+  \node[lbl,text=teal,above=2pt of gsense] {\textbf{1.\ SENSE} \,(teal)};
+  \node[lbl,text=navy,above=2pt of gcomp]  {\textbf{2.\ ANALYSE} \,(navy)};
+  \node[lbl,text=freeze,above=2pt of gdec] {\textbf{3.\ DECIDE} \,(red)};
+
+  % shipped vs upgrade annotation
+  % placed just outside the dashed ANALYSE box, clear of its border, with a
+  % white fill so the labels never collide with the dashed boundary.
+  \node[lbl,text=navy,fill=white,inner sep=1.5pt,
+        anchor=south west] at ($(fi.north east)+(0.18,0.30)$)
+        {\textbf{shipped} (glass box)};
+  \node[lbl,text=navy,fill=white,inner sep=1.5pt,
+        anchor=north west] at ($(cnn.south east)+(0.18,-0.30)$)
+        {\emph{upgrade} (not shipped)};
+
+\end{tikzpicture}}
+\caption{The Cadence pipeline, end to end. One accelerometer stream is reduced to a
+\textsc{still}/\textsc{walking}/\textsc{freeze} verdict every 2\,s. Stages are colour
+coded: \textcolor{teal}{\textbf{sensing}} (teal), \textcolor{navy}{\textbf{analysis}}
+(navy), \textcolor{freeze}{\textbf{decision}} (red). The \emph{shipped} detector is the
+glass-box Freeze Index (solid path); the 1-D CNN \textsc{FoGNet} is a drop-in
+\emph{upgrade} (dashed) explored later, not on the deployed board.}
+\label{fig:pipeline}
+\end{figure}
+
+Reading Figure~\ref{fig:pipeline} from left to right:
+
+\begin{enumerate}
+  \item \textbf{Sense.} The onboard LIS3DH MEMS accelerometer samples three axes at
+    \SI{64}{\hertz} over $\pm\SI{8}{\gram}$. The wide range matters: a heel-strike
+    momentarily exceeds $\pm\SI{2}{\gram}$, so a $\pm\SI{2}{\gram}$ part would clip.
+    The Nyquist frequency of \SI{32}{\hertz} comfortably covers every band we care about
+    (the highest, freeze, tops out at \SI{8}{\hertz}).
+  \item \textbf{Magnitude.} The three axes collapse into one orientation-invariant
+    scalar $\norm{a}=\sqrt{a_x^2+a_y^2+a_z^2}$; subtracting its mean removes gravity and
+    any DC offset, leaving pure motion to analyse.
+  \item \textbf{Window.} The stream is chopped into overlapping
+    \SI{256}{\text{-sample}} (\SI{4}{\second}) windows with a \SI{128}{\text{-sample}}
+    (\SI{2}{\second}) hop. Fifty-percent overlap yields one fresh decision every
+    \SI{2}{\second}.
+  \item \textbf{Analyse (the branch).} Each window is scored by either the shipped
+    \emph{Freeze Index} --- a ratio of spectral band powers --- or, as an upgrade, the
+    \textsc{FoGNet} CNN that reads the raw window directly. Both answer the same yes/no
+    question.
+  \item \textbf{Decide.} A movement-energy \emph{gate} forces \textsc{still} when the leg
+    is barely moving (so noise cannot masquerade as a freeze); a two-window
+    \emph{debounce} stops a single bump from flipping the verdict; the result is the
+    committed state.
+  \item \textbf{Display.} The state lights the body-worn OLED and NeoPixel ring and, on
+    the optional networked build, drives the live laptop dashboard.
+\end{enumerate}
+
+\begin{intuition}
+The whole device is one long funnel. A 3-axis, 64-per-second firehose of numbers is
+squeezed, stage by stage, down to a single word twice a second. Each stage throws away
+information that does not help answer ``are the feet trembling in place?'' --- first
+\emph{direction} (magnitude), then \emph{time detail} (the spectrum), then \emph{ambiguity}
+(the gate and debounce).
+\end{intuition}
+
+\subsection{Two detectors, one question}
+
+The single most important thing to understand about Cadence is that the box labelled
+\textbf{Analyse} contains two interchangeable answers to the same question, and the report
+treats them very differently.
+
+\begin{itemize}
+  \item The \textbf{Freeze Index (FI)} is the \emph{shipped} detector --- a transparent
+    ``glass box''. It is the ratio of energy in the freeze band (\SIrange{3}{8}{\hertz})
+    to energy in the locomotor band (\SIrange{0.5}{3}{\hertz}). When the feet shuffle in
+    place, the freeze band lights up and the ratio jumps. Every step of this calculation
+    is inspectable, which is exactly why it runs on the board.
+  \item \textsc{FoGNet}, a small 1-D \textbf{convolutional neural network}
+    ($\sim$18k parameters), is the ``given more time'' \emph{upgrade}. It learns its own
+    features from the raw $3\times256$ window. It is \textbf{not} on the deployed device;
+    it appears later as a benchmark of what a learned model buys (and costs) over the
+    glass box.
+\end{itemize}
+
+\begin{takeaway}
+The FI path is what actually ships and runs on the ankle; the CNN is an offline
+comparison. Wherever this report says ``the detector'' without qualification, it means the
+glass-box Freeze Index.
+\end{takeaway}
+
+Figure~\ref{fig:realsignal} shows the pipeline's raw input and its headline statistic on a
+real \SI{41.4}{\second} capture. The signal is calm during standing and walking, erupts
+into rapid trembling during the freeze phase, and the Freeze Index --- computed exactly as
+the device computes it --- tracks that eruption faithfully.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.86\linewidth]{capture1_trace}
+\caption{Real input and output of the analysis stage on \code{capture1.csv}
+(\SI{64}{\hertz}, \SI{41.4}{\second}). \emph{Top:} the mean-removed accelerometer
+magnitude through four labelled phases. The freeze phase (centre) shows the tell-tale
+rapid \SIrange{3}{8}{\hertz} trembling in place. \emph{Bottom:} the Freeze Index over the
+same window; it stays near 1 during stillness and walking and spikes above 20 during the
+freeze, far past the \num{1.815} trip line.}
+\label{fig:realsignal}
+\end{figure}
+
+\subsection{Three boards, three jobs}
+
+Cadence runs untethered, but the optional networked build spreads the work across three
+physical boards (Table~\ref{tab:boards}). The simplest deployment is just the first board:
+the Circuit Playground Express senses, runs the on-board FI detector, and drives its own
+OLED and LEDs --- no laptop required. Adding the ESP32 and a laptop only changes \emph{where}
+the verdict is displayed, never how it is computed.
+
+\begin{table}[H]
+\centering
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}>{\bfseries}l l l@{}}
+\toprule
+Board & Role & Job in the pipeline \\
+\midrule
+CPX & Sensor + detector & Samples the LIS3DH at \SI{64}{\hertz}, computes magnitude, the \\
+    & (always present)  & Freeze Index, the gate and debounce; drives the OLED + NeoPixels. \\
+ESP32 & Wi-Fi bridge & Relays the stream over \mbox{UART\,$\to$\,Wi-Fi/TCP} to the laptop. \\
+      & (optional)   & Carries data only; makes no decision. \\
+Laptop & Dashboard host & Runs the asyncio + WebSocket server that renders the live \\
+       & (optional)     & display panels and, offline, trains/evaluates \textsc{FoGNet}. \\
+\bottomrule
+\end{tabular}
+\caption{The three boards. Only the \textbf{CPX} is required; the freeze decision always
+happens there. The ESP32 and laptop add a live remote dashboard but do not move the
+detector off the ankle.}
+\label{tab:boards}
+\end{table}
+
+A matching split exists in firmware. One role, the \emph{recorder}
+(\code{cpx\_fog\_logger.ino}), logs auto-labelled accelerometer data to the CPX's
+\SI{2}{\mega\byte} flash for later analysis; the other, the \emph{monitor}
+(\code{cpx\_fog\_standalone.ino}), runs the live OLED-and-LED freeze display. The figures
+of real data throughout this report --- like Figure~\ref{fig:realsignal} --- come from the
+recorder; the device the reader would wear runs the monitor.
+
+\begin{keyidea}
+The decision lives on the ankle. Whether or not a laptop is in the loop, the CPX alone
+turns raw acceleration into a \textsc{freeze} verdict and shows it on the body. The rest of
+the report simply opens up each box in Figure~\ref{fig:pipeline}: the spectral maths
+(\S\ref{sec:overview}\,$\to$ Fourier), the Freeze Index and its threshold, the
+decision logic, and the CNN upgrade.
+\end{keyidea}

@@ -1,0 +1,116 @@
+% ============================================================================
+%  Cadence — Technical Report : SHARED PREAMBLE
+%  Usage:  \input{preamble.tex}  then  \begin{document} ... \end{document}
+%  Compiles with: tectonic
+% ============================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=2.2cm,headheight=15pt]{geometry}
+
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{graphicx}
+\usepackage{booktabs,array,multirow,longtable}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{caption,subcaption}
+\usepackage{float}
+\usepackage{listings}
+\usepackage[most]{tcolorbox}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{siunitx}
+\usepackage[hidelinks,bookmarks]{hyperref}
+
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,calc,shapes.geometric,shapes.misc,
+  backgrounds,fit,decorations.pathreplacing,decorations.markings,patterns,
+  shadows.blur,3d,angles,quotes,intersections}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepgfplotslibrary{groupplots,fillbetween}
+
+% absolute graphics paths so this compiles from anywhere (agent /tmp + report/)
+\graphicspath{%
+  {../pi/accuracy_figs/}%
+  {../hardware/}%
+  {../colab/fog_plots/}%
+}
+
+% ---- palette ---------------------------------------------------------------
+\definecolor{navy}{HTML}{1E2761}     % primary / models
+\definecolor{steel}{HTML}{34618E}
+\definecolor{teal}{HTML}{1C7293}     % sensing
+\definecolor{amber}{HTML}{8A6D00}    % evaluation
+\definecolor{purple}{HTML}{5B3A8C}   % interpretability
+\definecolor{freeze}{HTML}{B2182B}   % freeze / decision
+\definecolor{grn}{HTML}{2E7D32}      % walking / OK
+\definecolor{ink}{HTML}{1F2733}
+\definecolor{mute}{HTML}{56606B}
+\definecolor{mist}{HTML}{EEF2F8}
+\definecolor{paleteal}{HTML}{E7F2F1}
+\definecolor{palenavy}{HTML}{E8ECF6}
+\definecolor{paleamber}{HTML}{FBF3DD}
+\definecolor{palefreeze}{HTML}{FBEAEA}
+\definecolor{codebg}{HTML}{F6F8FA}
+\definecolor{rule}{HTML}{C9D3E4}
+
+% ---- headers/footers (static — robust) -------------------------------------
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\fancyhead[L]{\small\color{mute}\textsc{Cadence}}
+\fancyhead[R]{\small\color{mute}Freeze-of-Gait Monitor \,\textbullet\, Technical Report}
+\fancyfoot[C]{\small\color{mute}\thepage}
+
+% ---- section styling -------------------------------------------------------
+\titleformat{\section}{\Large\bfseries\color{navy}}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\large\bfseries\color{steel}}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{ink}}{\thesubsubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{1.5em}{0.6em}
+
+\captionsetup{font=small,labelfont=bf,labelsep=period}
+\setlist{nosep,leftmargin=1.4em}
+
+% ---- callout boxes (robust tcolorbox) --------------------------------------
+\newtcolorbox{intuition}{breakable,colback=paleteal,colframe=teal,boxrule=0.6pt,
+  arc=2pt,left=8pt,right=8pt,top=6pt,bottom=6pt,
+  title={\textbf{Intuition}},coltitle=white,colbacktitle=teal,fonttitle=\bfseries}
+\newtcolorbox{keyidea}{breakable,colback=palenavy,colframe=navy,boxrule=0.6pt,
+  arc=2pt,left=8pt,right=8pt,top=6pt,bottom=6pt,
+  title={\textbf{Key idea}},coltitle=white,colbacktitle=navy,fonttitle=\bfseries}
+\newtcolorbox{mathsbox}{breakable,colback=paleamber,colframe=amber,boxrule=0.6pt,
+  arc=2pt,left=8pt,right=8pt,top=6pt,bottom=6pt,
+  title={\textbf{The maths, unpacked}},coltitle=white,colbacktitle=amber,fonttitle=\bfseries}
+\newtcolorbox{takeaway}{breakable,colback=palefreeze,colframe=freeze,boxrule=0.6pt,
+  arc=2pt,left=8pt,right=8pt,top=6pt,bottom=6pt,
+  title={\textbf{Takeaway}},coltitle=white,colbacktitle=freeze,fonttitle=\bfseries}
+
+% ---- code listings ---------------------------------------------------------
+\lstdefinestyle{py}{language=Python,basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codebg},keywordstyle=\color{navy}\bfseries,
+  commentstyle=\color{mute}\itshape,stringstyle=\color{teal},
+  numbers=left,numberstyle=\tiny\color{mute},frame=single,rulecolor=\color{rule},
+  breaklines=true,showstringspaces=false,columns=fullflexible,xleftmargin=2.2em}
+\lstdefinestyle{cpp}{language=C++,basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codebg},keywordstyle=\color{navy}\bfseries,
+  commentstyle=\color{mute}\itshape,stringstyle=\color{teal},
+  numbers=left,numberstyle=\tiny\color{mute},frame=single,rulecolor=\color{rule},
+  breaklines=true,showstringspaces=false,columns=fullflexible,xleftmargin=2.2em}
+
+% ---- handy macros ----------------------------------------------------------
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\FI}{\mathrm{FI}}
+\newcommand{\norm}[1]{\lVert #1 \rVert}
+% CNN tensor "volume": centre (#1,0), half-width #2, half-height #3, front #4, back #5
+\newcommand{\cnnvol}[5]{%
+  \filldraw[#5] ({#1-#2+0.13},{-#3+0.13}) rectangle ({#1+#2+0.13},{#3+0.13});%
+  \filldraw[#4] ({#1-#2},{-#3}) rectangle ({#1+#2},{#3});%
+}
+
+\hypersetup{pdftitle={Cadence — Technical Report},pdfauthor={Cadence (ENGF0031 Scenario 2)}}
+% NOTE: no \begin{document} here — the calling file adds it.

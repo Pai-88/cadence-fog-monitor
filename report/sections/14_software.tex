@@ -1,0 +1,348 @@
+\section{Software}
+\label{sec:software}
+
+Cadence is small in hardware but rich in software. Everything from the live freeze
+verdict on the wrist to the leave-one-subject-out study of the CNN is driven by one
+torch-free Python package, called \code{fog}, plus a few companions: the optional CNN
+in \code{model.py}, the Arduino/C++ firmware, and an \code{asyncio} dashboard server
+that streams to a browser. This section walks through how those pieces fit together,
+what the signal-processing core actually computes, how live samples flow from the
+ankle to the screen, and a design lesson that quietly shapes the whole pipeline:
+\emph{the live detector reads raw acceleration on purpose}.
+
+\begin{keyidea}
+One package does the maths twice. The \emph{same} \code{fog.dsp} functions that score
+a window in the offline study also score the live stream in the dashboard. There is no
+second, divergent implementation to keep in sync --- the report's figures and the
+device's verdict come from one source of truth.
+\end{keyidea}
+
+\subsection{Architecture at a glance}
+
+The codebase is deliberately layered. At the bottom sits \code{fog}, a pure-Python
+package with no machine-learning framework dependency --- it needs only NumPy and
+SciPy. On top of that core, three consumers reuse the same primitives: the firmware
+(a C++ re-implementation of the detector for the SAMD21), the dashboard server (live
+display), and the analysis scripts (offline figures). The CNN lives off to one side as
+a heavier, optional ``given more time'' upgrade that does pull in \code{torch}.
+Figure~\ref{fig:sw-modules} sketches the modules and the direction data flows between
+them.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\sffamily,
+  box/.style={draw,rounded corners=2pt,minimum height=9mm,minimum width=24mm,
+    align=center,font=\small,fill=white,drop shadow={shadow blur steps=4,opacity=0.18}},
+  core/.style={box,fill=paleteal,draw=teal,text=ink},
+  cnnb/.style={box,fill=palenavy,draw=navy,text=ink},
+  fw/.style={box,fill=paleamber,draw=amber,text=ink},
+  dashb/.style={box,fill=palefreeze,draw=freeze,text=ink},
+  grp/.style={draw=rule,rounded corners=4pt,inner sep=8pt,line width=0.8pt},
+  flow/.style={-{Latex[length=2.4mm]},thick,mute},
+  lbl/.style={font=\footnotesize\itshape,mute}
+]
+
+% ---- the fog core package (centre-left) ----
+\node[core] (config)   at (0,0)      {\textbf{config}\\thresholds, bands};
+\node[core] (dsp)      at (0,-1.5)   {\textbf{dsp}\\magnitude, FI,\\energy, band\_power};
+\node[core] (stream)   at (0,-3.0)   {\textbf{streaming}\\serial+replay,\\ring buffer, pacing};
+\node[core] (metrics)  at (0,-4.5)   {\textbf{metrics}\\sens., spec.,\\confusion};
+\node[core] (normz)    at (0,-6.0)   {\textbf{normalize}\\scaling helpers};
+% deliberate strike-through on the name: normalize exists but is NOT in the
+% shipped glass-box path (legend note sits below the diagram)
+\draw[mute,line width=0.5pt] ([yshift=2.2mm,xshift=4mm]normz.west)
+      -- ([yshift=2.2mm,xshift=-4mm]normz.east);
+
+\begin{scope}[on background layer]
+  \node[grp,fill=mist,fit=(config)(dsp)(stream)(metrics)(normz),
+        label={[font=\small\bfseries,teal]above:\code{fog} \;(torch-free core)}] (fogbox) {};
+\end{scope}
+
+% ---- data sources (far left) ----
+\node[box,fill=white,draw=steel,text=ink] (cpx) at (-4.4,-1.5)
+      {Ankle CPX\\(LIS3DH, 64\,Hz)};
+\node[box,fill=white,draw=steel,text=ink] (daph) at (-4.4,-4.5)
+      {Daphnet\\dataset};
+
+% ---- consumers (right) ----
+\node[fw]   (firmware) at (5.0,-0.3)  {\textbf{firmware}\\\code{cpx\_*.ino} (C++)\\OLED + NeoPixel};
+\node[dashb] (server)   at (5.0,-2.3)  {\textbf{dashboard server}\\asyncio + websocket};
+\node[dashb] (html)     at (5.0,-3.9)  {\code{dashboard.html}\\7 live panels};
+\node[cnnb] (cnn)      at (5.0,-5.8)  {\textbf{model.py}\\FoGNet 1-D CNN\\(\code{torch})};
+
+% ---- flows ----
+\draw[flow] (cpx) -- (stream.west);
+\draw[flow] (daph) |- (metrics.west);
+% route the Daphnet -> model.py edge below the fog box so it never
+% crosses the normalize node (which sits at the bottom of the core)
+\draw[flow] (daph.south) |- (-4.4,-7.4) -| (cnn.south);
+
+\draw[flow] (config) -- (dsp);
+\draw[flow] (dsp) -- (stream);
+
+\draw[flow] (fogbox.east|-firmware) -- (firmware.west)
+      node[lbl,midway,above]{ported to C++};
+\draw[flow] (fogbox.east|-server) -- (server.west);
+\draw[flow] (server) -- (html);
+\draw[flow] (dsp.east) to[out=0,in=180] (cnn.west);
+
+% headline label
+\node[lbl,align=center] at (5.0,1.2)
+  {\textbf{\color{ink}consumers reuse the core}};
+\node[lbl,align=center] at (-4.4,1.2)
+  {\textbf{\color{ink}data sources}};
+% legend: explain the strike-through convention so it is never misread
+\node[lbl,align=center,anchor=north] at (0.3,-8.1)
+  {\footnotesize\itshape \textbf{normalize} struck through $=$ present in the package
+   but not used in the shipped detection path};
+\end{tikzpicture}}
+\caption{Software architecture. The torch-free \code{fog} core (teal) holds the signal
+processing and metrics; the firmware, dashboard server, and CNN are thin consumers that
+reuse it. Live samples enter through \code{streaming}; the Daphnet benchmark feeds the
+offline CNN and metrics. Arrows show the direction of data flow.}
+\label{fig:sw-modules}
+\end{figure}
+
+A short tour of the five core sub-modules:
+
+\begin{itemize}
+\item \textbf{\code{config}} --- the single place that names the frequency bands
+  (locomotor $0.5$--$3$\,Hz, freeze $3$--$8$\,Hz, rest-tremor $4$--$6$\,Hz), the
+  sampling rate, the window and hop sizes, and the deployed \code{FI\_THRESHOLD}.
+  Nothing else hard-codes a magic number.
+\item \textbf{\code{dsp}} --- the numerical heart: \code{magnitude}, \code{band\_power},
+  \code{freeze\_index}, \code{movement\_energy}, and an \code{AccelFilter} helper.
+\item \textbf{\code{streaming}} --- a receiver that reads samples from either a live
+  serial port or a recorded replay, buffers them in a fixed-size ring, and paces
+  replay to wall-clock time so a recording behaves exactly like a live device.
+\item \textbf{\code{metrics}} --- sensitivity, specificity, precision, accuracy, and
+  confusion-matrix bookkeeping; the vocabulary the evaluation chapters speak in.
+\item \textbf{\code{normalize}} --- scaling helpers used to standardise feature vectors
+  before they reach the glass-box models.
+\end{itemize}
+
+\subsection{The signal-processing core (\code{dsp})}
+
+Every quantity the device reports is built from one orientation-invariant scalar. The
+three accelerometer axes are collapsed into a magnitude
+$a=\sqrt{a_x^2+a_y^2+a_z^2}$, and its mean is subtracted to strip out gravity and any
+DC offset before spectral analysis. From the mean-removed magnitude, a Hann-tapered
+Welch power spectral density over a $256$-sample ($4.0$\,s) window gives a spectrum
+with bin spacing $\mathrm{d}f=f_s/N=64/256=0.25$\,Hz. \code{band\_power} then sums the
+PSD over the bins inside a band, and the two headline quantities follow directly:
+
+\begin{align}
+\FI &= \frac{P_{3\text{--}8\,\mathrm{Hz}}}{P_{0.5\text{--}3\,\mathrm{Hz}}+\varepsilon},
+  &\varepsilon &= 10^{-9},
+  \label{eq:fi}\\[2pt]
+E_{\text{move}} &= P_{0.5\text{--}3\,\mathrm{Hz}} + P_{3\text{--}8\,\mathrm{Hz}}.
+  \label{eq:energy}
+\end{align}
+
+\begin{mathsbox}
+The Freeze Index in Eq.~\eqref{eq:fi} is a \emph{ratio} of two band powers, so any
+overall scaling cancels: it reads the same whether the host works in milli-$g$ or the
+device works in $\mathrm{m/s^2}$. The tiny $\varepsilon=10^{-9}$ in the denominator is
+not physics --- it is numerical insurance so a perfectly still leg (near-zero
+locomotor power) cannot trigger a divide-by-zero. Movement energy in
+Eq.~\eqref{eq:energy} is the \emph{sum} of the same two bands and therefore is
+\emph{not} scale-invariant; that is deliberate, because it must measure how much the
+leg is actually moving.
+\end{mathsbox}
+
+The same \code{dsp} module is what the C++ firmware mirrors line-for-line. Reproducing
+\code{freeze\_index} faithfully in Python (Listing~\ref{lst:fi}) is what lets the offline
+study, the dashboard, and the on-board detector all agree to the bin.
+
+\begin{lstlisting}[style=py,caption={The shipped Freeze Index, faithful to the
+deployed detector. Magnitude is mean-removed; the ratio is taken over the standard
+bands with the $10^{-9}$ guard.},label={lst:fi}]
+import numpy as np
+from .config import FS, FREEZE_BAND, LOCO_BAND, EPS  # 64 Hz; (3,8); (0.5,3); 1e-9
+
+def magnitude(ax, ay, az):
+    """Orientation-invariant scalar, mean removed (drops gravity/DC)."""
+    a = np.sqrt(ax**2 + ay**2 + az**2)
+    return a - a.mean()
+
+def freeze_index(window):
+    """Moore et al. (2008) Freeze Index on a 256-sample (4 s) window."""
+    p_freeze = band_power(window, *FREEZE_BAND)   # power in 3-8 Hz
+    p_loco   = band_power(window, *LOCO_BAND)     # power in 0.5-3 Hz
+    return p_freeze / (p_loco + EPS)              # ratio -> scale-invariant
+
+def movement_energy(window):
+    """How hard the leg is moving (NOT scale-invariant) -> drives the gate."""
+    return band_power(window, *LOCO_BAND) + band_power(window, *FREEZE_BAND)
+\end{lstlisting}
+
+\subsection{Streaming: from ankle to ring buffer}
+
+The \code{streaming} sub-module is what makes the device feel ``live''. It exposes one
+receiver that works two ways. In \emph{serial} mode it reads accelerometer frames off
+the CPX (or, in the three-board topology, off the ESP32 over TCP) as they arrive at
+$64$\,Hz. In \emph{replay} mode it reads the same frames from a recorded capture but
+\emph{paces} them to wall-clock time, so a saved file plays back at exactly the speed
+the body produced it. The downstream code cannot tell the difference --- which means
+the dashboard can be demonstrated and debugged off a recording, then run unchanged on
+the real ankle.
+
+Incoming samples land in a fixed-size \emph{ring buffer} that always holds the most
+recent $256$ samples ($4.0$\,s). Every $128$ samples ($2.0$\,s) the server lifts the
+current window out of the ring and scores it --- this is the $50\%$ overlap that yields
+one decision every two seconds. A ring buffer is the right structure here: it is
+constant-memory, never grows, and overwrites the oldest sample as each new one
+arrives, which is exactly the ``sliding window over a never-ending stream'' the live
+detector needs.
+
+\begin{intuition}
+Think of the ring buffer as a $4$-second-wide window you slide along the incoming
+signal. It is always full and always current. Every two seconds you photograph what is
+inside it and ask one question --- ``does this look like a freeze?'' --- then slide on.
+The overlap means a freeze that starts mid-window still gets two looks before it ends.
+\end{intuition}
+
+\subsection{The dashboard server's control loop}
+
+The dashboard server is an \code{asyncio} program that ties the stream to the browser.
+One coroutine fills the ring buffer from \code{streaming}; another runs the control loop
+every hop, scores the window with \code{fog.dsp}, decides a state, and pushes a small
+JSON payload to \code{dashboard.html} over a websocket. The client renders seven live
+panels --- gait status, freeze margin, the raw Freeze Index, tremor power
+($4$--$6$\,Hz), movement energy, locomotion power, and the raw $3$-axis waveform.
+
+The state decision itself is the ``glass box'': three explainable stages in series ---
+a still-floor \emph{gate}, the $\FI$ threshold, and a \emph{debounce}. The gate forces
+\textsc{still} whenever movement energy is below an auto-calibrated floor, because a
+motionless leg has near-zero energy yet sensor noise can spike the ratio. Only if the
+leg is genuinely moving does the loop compare the Freeze Index to the deployed
+threshold of $1.815$. Listing~\ref{lst:state} shows the raw per-window verdict before
+debounce.
+
+\begin{lstlisting}[style=py,caption={The gated state decision (one window, pre-debounce).
+The gate runs first so a still leg can never be called a freeze.},label={lst:state}]
+def decide_state(window, still_floor, fi_threshold=1.815):
+    energy = movement_energy(window)
+    if energy < still_floor:          # gate: not enough motion
+        return "STILL"
+    if freeze_index(window) > fi_threshold:
+        return "FREEZE"               # moving AND high freeze-band ratio
+    return "WALKING"                  # moving but rhythmic, low FI
+\end{lstlisting}
+
+A raw per-window verdict can still flicker on a single noisy bump, so the committed
+state is \emph{debounced}: a new state must persist for two consecutive control windows
+before it is accepted (assert-after-2), and likewise must clear for two before it is
+released (release-after-2). One stray window never flips the headline. The
+\emph{freeze margin} panel surfaces the same logic as a confidence meter: it plots the
+live $\FI$ as a percentage of the $1.815$ trip line ($100\%$ means at or over the
+trip), and shows ``---/at rest'' whenever the gate has forced \textsc{still}.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.95\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\sffamily,
+  stage/.style={draw,rounded corners=2pt,minimum height=11mm,minimum width=27mm,
+    align=center,font=\small,fill=white},
+  io/.style={draw,rounded corners=8pt,minimum height=11mm,minimum width=22mm,
+    align=center,font=\small,fill=mist,text=ink,draw=steel},
+  dec/.style={draw,diamond,aspect=2,inner sep=1pt,align=center,font=\footnotesize,
+    fill=paleamber,draw=amber,text=ink,minimum width=24mm},
+  flow/.style={-{Latex[length=2.4mm]},thick,mute},
+  edgelbl/.style={font=\footnotesize,mute,fill=white,inner sep=1.5pt}
+]
+\node[io] (ring) {ring buffer\\(256 samples)};
+\node[stage,right=12mm of ring,fill=paleteal,draw=teal] (dsp) {\code{dsp}\\$E_{\text{move}}$, $\FI$};
+\node[dec,right=12mm of dsp] (gate) {$E_{\text{move}}$\\$<$ floor?};
+\node[dec,right=20mm of gate] (fi) {$\FI > 1.815$?};
+
+\node[stage,fill=palenavy,draw=navy,below=14mm of gate] (still) {\textbf{STILL}};
+\node[stage,fill=palefreeze,draw=freeze,below=14mm of fi] (freeze) {\textbf{FREEZE}};
+\node[stage,fill=mist,draw=grn,right=14mm of freeze] (walk) {\textbf{WALKING}};
+
+\node[stage,fill=white,draw=ink,below=12mm of freeze,minimum width=44mm] (deb)
+  {debounce (assert/release after 2)};
+\node[io,right=12mm of deb,minimum width=26mm] (out) {committed\\gait status};
+
+\draw[flow] (ring) -- (dsp);
+\draw[flow] (dsp) -- (gate);
+\draw[flow] (gate) -- node[edgelbl,above]{no} (fi);
+\draw[flow] (gate) -- node[edgelbl,right]{yes} (still);
+\draw[flow] (fi) -- node[edgelbl,left]{yes} (freeze);
+\draw[flow] (fi) -| node[edgelbl,above,pos=0.25]{no} (walk);
+
+\draw[flow] (still) |- (deb.west);
+\draw[flow] (freeze) -- (deb);
+\draw[flow] (walk) |- (deb.east);
+\draw[flow] (deb) -- (out);
+\end{tikzpicture}}
+\caption{The dashboard control loop, run once per $2$-s hop. The still-floor gate
+acts before the $\FI$ test, so a motionless leg is never called a freeze; the raw
+verdict is then debounced (assert/release after two windows) into the committed gait
+status shown on the wrist and the web panel.}
+\label{fig:control-loop}
+\end{figure}
+
+\subsection{The offline data pipeline}
+
+Alongside the live path is a reproducible batch pipeline that turns raw recordings into
+the figures in this report. It runs in four stages: \textbf{capture} (log raw accel and
+auto-labelled phases to the CPX flash, then pull them over USB with \code{cpx\_dump.py});
+\textbf{daphnet} (ingest the public Daphnet FoG benchmark for the model study);
+\textbf{analyze} (window each capture, score it with the \emph{same} \code{fog.dsp}
+functions, sweep the $\FI$ threshold, and run \code{metrics}); and \textbf{figures}
+(emit the PDFs the report includes). Because \code{analyze} calls the identical \code{dsp}
+that the dashboard does, the threshold sweep that produced the deployed $1.815$ is the
+same code that runs on the live stream.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.92\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\sffamily,node distance=8mm,
+  st/.style={draw,rounded corners=2pt,minimum height=10mm,minimum width=26mm,
+    align=center,font=\small,fill=white,text=ink},
+  flow/.style={-{Latex[length=2.4mm]},thick,mute}
+]
+\node[st,fill=paleteal,draw=teal]  (cap)  {\textbf{capture}\\CPX flash\\$\to$ CSV};
+\node[st,fill=paleteal,draw=teal,right=of cap]  (dap)  {\textbf{daphnet}\\public FoG\\benchmark};
+\node[st,fill=paleamber,draw=amber,right=of dap] (an)   {\textbf{analyze}\\window $+$\\\code{dsp} $+$ \code{metrics}};
+\node[st,fill=palenavy,draw=navy,right=of an]    (fig)  {\textbf{figures}\\report PDFs};
+\draw[flow] (cap) -- (an);
+\draw[flow] (dap) -- (an);
+\draw[flow] (an) -- (fig);
+\node[font=\footnotesize\itshape,mute,below=2mm of an,align=center]
+  {same \code{fog.dsp} as the live dashboard};
+\end{tikzpicture}}
+\caption{The offline pipeline: \textbf{capture} $\to$ \textbf{daphnet} $\to$
+\textbf{analyze} $\to$ \textbf{figures}. The \code{analyze} stage reuses the live
+signal-processing core, so the offline study and the on-body device never disagree.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{Design lesson: the live detector reads raw acceleration}
+
+An obvious-looking ``improvement'' would be to band-pass filter each axis before
+taking the magnitude, to clean up the signal. The project tried it, and it
+\emph{quietly broke the detector}. Filtering each axis before combining them flattens
+the $\FI$ ratio: once the bands are pre-shaped per axis, walking and freezing produce
+similar ratios, and the very contrast the Freeze Index relies on disappears. The fix
+was to leave the live $\FI$ path \emph{deliberately unfiltered} --- magnitude is taken
+on the raw accelerometer, and the only conditioning is the mean removal that strips
+gravity. (The \code{AccelFilter} helper still exists for other uses; it simply is not
+in the $\FI$ path.)
+
+\begin{takeaway}
+Do not filter before the Freeze Index. Per-axis band-pass filtering ahead of the
+magnitude flattens the $\FI$ ratio so walking and freezing look alike --- so the live
+detector reads \emph{raw} acceleration, with only gravity removed.
+\end{takeaway}
+
+This whole core --- the \code{dsp} maths, the gated state machine, the streaming
+receiver, and the metrics --- is held in place by a suite of \textbf{73 passing unit
+tests}. They pin the band-power sums, the scale-invariance of the Freeze Index, the
+gate-before-threshold ordering, and the debounce timing, so a future refactor cannot
+silently change what the device decides is a freeze.

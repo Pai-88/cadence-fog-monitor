@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cadence Online · Live Gait Monitor</title>
+<style>
+  :root {
+    /* ── canvas trace colours — READ BY JS via getComputedStyle, keep these names ── */
+    --ax: #0b66b3;        /* x trace                 */
+    --ay: #0a9aa6;        /* y trace                 */
+    --az: #e2730a;        /* z trace + tremor spark  */
+    --freeze: #d22f3f;    /* freeze-index spark + FREEZE state */
+    --energy: #c41e54;    /* movement-energy readout + spark   */
+    --loco:   #0a6ebd;    /* locomotion-power readout + spark  */
+    /* ── 2002 web-portal palette ── */
+    --navy:    #000a4e;   /* deep banner navy        */
+    --royal:   #1b3fae;   /* gradient royal blue     */
+    --steelbar:#33508f;   /* eyebrow labels          */
+    --beige:   #ece9d8;   /* win9x/XP panel beige    */
+    --page:    #aeb9cc;   /* desktop blue-gray       */
+    --rule:    #000066;   /* table / border navy     */
+    --link:    #0000cc;   /* classic web link        */
+    --link-v:  #551a8b;   /* visited link            */
+    --ink:     #10204a;   /* big readout numbers     */
+    --text:    #1a1a1a;   /* body text               */
+    --muted:   #555a66;   /* labels / captions       */
+    --walk:    #1f7a3d;   /* WALKING state           */
+    --still:   #1f6f8b;   /* STILL state             */
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 13px/1.55 Georgia, "Times New Roman", Times, serif;
+    color: var(--text);
+    background: var(--page);
+    background-image: repeating-linear-gradient(45deg,
+        rgba(255,255,255,.20) 0 2px, rgba(0,0,0,0) 2px 4px);
+    background-attachment: fixed;
+  }
+  a { color: var(--link); text-decoration: underline; }
+  a:visited { color: var(--link-v); }
+  a:hover { color: #cc0000; }
+  .tabnums { font-variant-numeric: tabular-nums; }
+  @keyframes blink { 50% { opacity: .3; } }
+  @keyframes marq  { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+  @keyframes spk   { from { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+                     to   { opacity: 0; transform: translate(-50%,-150%) scale(.35); } }
+
+  /* ── FULL-PAGE site frame (fills the window; thin striped gutter is the "desktop") ── */
+  .site {
+    margin: 10px;
+    background: #ffffff; border: 2px solid var(--rule);
+    box-shadow: 5px 5px 0 rgba(0,0,0,.35);
+  }
+
+  /* ── masthead: wordmark + tagline on a beveled blue bar ── */
+  .masthead {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    padding: 11px 16px; color: #fff;
+    background: linear-gradient(180deg, #2b56c8 0%, var(--royal) 46%, var(--navy) 100%);
+    border-bottom: 2px solid var(--navy);
+  }
+  .brand .wm {
+    font: 700 38px/1 Georgia, "Times New Roman", serif; letter-spacing: .5px; color: #fff;
+    text-shadow: 1px 1px 0 #00031f, 2px 2px 0 rgba(0,0,0,.35);
+  }
+  .brand .wm sup { font-size: 13px; vertical-align: super; }
+  .brand .wm .dot { color: #ffd23b; }
+  .brand .tag {
+    font: 11px/1.2 Verdana, Geneva, sans-serif; letter-spacing: 2px; text-transform: uppercase;
+    color: #bcd2ff; margin-top: 4px;
+  }
+  .masthead .corner { text-align: right; font: 11px/1.5 Verdana, sans-serif; color: #cfe0ff; }
+  .masthead .clock {
+    display: inline-block; margin-bottom: 5px; padding: 2px 9px;
+    background: #001a6e; border: 2px inset #4a6fd0; color: #7ff6c0;
+    font: 700 12px "Courier New", monospace; letter-spacing: 1px;
+  }
+
+  /* ── connection lamp (JS toggles .live) ── */
+  .conn {
+    display: inline-flex; align-items: center; gap: 7px; margin-top: 6px;
+    font: 11px "Courier New", monospace; color: #dffaff;
+    background: #001a6e; border: 2px outset #4a6fd0; padding: 3px 9px;
+  }
+  .conn .dot { width: 9px; height: 9px; border-radius: 50%; background: #7f8aa8; border: 1px solid #00031f; }
+  .conn.live .dot { background: #39e26a; box-shadow: 0 0 6px #39e26a; animation: blink 1s steps(2, start) infinite; }
+
+  /* ── nav button row ── */
+  .navbar {
+    display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
+    padding: 5px 9px; font: 11px Verdana, Geneva, Arial, sans-serif;
+    background: linear-gradient(180deg, #dfe3ee, #aeb7cb); border-bottom: 2px solid var(--navy);
+  }
+  .navbar a.btn {
+    text-decoration: none; color: #10205a; font-weight: 700; padding: 3px 10px;
+    background: linear-gradient(180deg, #fbfcff, #c9d2e6); border: 2px outset #eef2fb;
+  }
+  .navbar a.btn:hover { background: linear-gradient(180deg, #fff, #bcd0ff); color: #001a8e; }
+  .navbar .blink { color: #cc0000; font-weight: 700; margin-left: 2px; animation: blink 1s steps(2, start) infinite; }
+  .navtools { margin-left: auto; display: flex; align-items: center; gap: 5px; }
+  .navtools .srch { font: 11px Verdana, sans-serif; padding: 2px 6px; border: 2px inset #c7cee0; width: 130px; }
+  .navtools .go {
+    font: 700 11px Verdana, sans-serif; padding: 2px 10px; color: #10205a; cursor: pointer;
+    background: linear-gradient(180deg, #fbfcff, #c9d2e6); border: 2px outset #eef2fb;
+  }
+  .navtools .jump { font: 11px Verdana, sans-serif; border: 2px outset #eef2fb; background: #fff; }
+
+  /* ── scrolling status ticker ── */
+  .ticker {
+    overflow: hidden; white-space: nowrap; padding: 4px 0;
+    background: #000a3a; color: #ffd23b; border-bottom: 2px solid var(--navy);
+    font: 12px "Courier New", monospace;
+  }
+  .ticker span { display: inline-block; padding-left: 100%; animation: marq 30s linear infinite; }
+
+  /* ── pixel-art "GIF" sprites (inline SVG, no network — works offline) ── */
+  @keyframes globespin { from { transform: translateX(0); }    to { transform: translateX(-32px); } }
+  @keyframes walkcycle { from { transform: translateX(0); }    to { transform: translateX(-16px); } }
+  @keyframes flick     { 0%,100% { transform: scaleY(1)   translateY(0);    opacity: 1;  }
+                         50%     { transform: scaleY(1.25) translateY(-1px); opacity: .8; } }
+  .pixel { image-rendering: pixelated; image-rendering: crisp-edges; shape-rendering: crispEdges; }
+
+  /* spinning WWW globe (masthead) */
+  .gif-globe { width: 40px; height: 40px; vertical-align: middle; }
+  .gif-globe .spin { animation: globespin 1.6s steps(8) infinite; }
+  /* little walking mascot — 2-frame step cycle (ties to gait monitoring) */
+  .gif-walk { width: 22px; height: 34px; vertical-align: middle; }
+  .gif-walk .legs { animation: walkcycle .5s steps(2) infinite; }
+  /* flame accents */
+  .gif-flame { width: 13px; height: 18px; vertical-align: -4px; animation: flick .28s steps(2) infinite; transform-origin: 50% 100%; }
+
+  /* ── right-rail live session-monitor widgets ── */
+  .scorebox { padding: 9px 7px; text-align: center; background: #001a6e; border: 1px solid #8893b5; border-top: 0; }
+  .scorebox .num { display: inline-block; padding: 3px 10px; background: #000; color: #ffd23b;
+                   font: 700 28px "Courier New", monospace; letter-spacing: 4px; border: 2px inset #4a6fd0; }
+  .scorebox .latest { display: block; margin-top: 6px; font: 700 10px Verdana, sans-serif; color: #cfe0ff; }
+  .scorebox .latest b { color: #ffd23b; }
+  .scorers { background: #fff; border: 1px solid #8893b5; border-top: 0; font: 12px Georgia, serif; }
+  .scorers .r { display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-bottom: 1px dotted #cfd6e6; }
+  .scorers .r:last-of-type { border-bottom: 0; }
+  .scorers .rk { width: 13px; color: #b5853a; font: 700 11px Verdana, sans-serif; text-align: right; }
+  .scorers .nm { flex: 1 1 auto; color: #10205a; } .scorers .nm small { color: #999; font-size: 9px; }
+  .scorers .g { font: 700 13px Georgia, serif; color: #c41e54; }
+  .scorers .more { display: block; padding: 4px 8px; font: 10px Verdana, sans-serif; }
+  .result { padding: 9px 7px; text-align: center; background: #fff; border: 1px solid #8893b5; border-top: 0; }
+  .result .rl { font: 700 9px Verdana, sans-serif; letter-spacing: 1px; color: var(--steelbar); text-transform: uppercase; }
+  .result .sc { margin: 5px 0; font: 700 22px Georgia, serif; color: var(--ink); }
+  .result .sc .w { color: #1d7a3d; }
+  .result .meta { font: 10px Verdana, sans-serif; color: #777; }
+
+  /* ── sidebar "rate this site" star poll (cosmetic only — no backend) ── */
+  .poll { padding: 8px 7px; text-align: center; background: #fff; border: 1px solid #8893b5; border-top: 0; font: 11px Verdana, sans-serif; color: #444; }
+  .poll .stars { font-size: 21px; letter-spacing: 3px; line-height: 1.1; cursor: pointer; user-select: none; }
+  .poll .stars span { color: #c2c8d6; transition: color .08s; }
+  .poll .stars span.lit { color: #f0b400; text-shadow: 0 0 4px rgba(240,180,0,.55); }
+  .poll .ptip { display: block; margin-top: 4px; font: 10px Verdana, sans-serif; color: #777; }
+
+  /* ── faux 56k modem connection meter (cosmetic) ── */
+  .modem { padding: 7px; background: #000; border: 1px solid #8893b5; border-top: 0; font: 10px "Courier New", monospace; color: #21d04a; }
+  .modem .row { display: flex; justify-content: space-between; align-items: center; }
+  .modem .bars { display: inline-flex; gap: 2px; }
+  .modem .bars span { width: 4px; background: #0a3a18; }
+  .modem .bars span.on { background: #21d04a; box-shadow: 0 0 3px #21d04a; }
+  .modem .bars span:nth-child(1){height:5px;} .modem .bars span:nth-child(2){height:8px;}
+  .modem .bars span:nth-child(3){height:11px;} .modem .bars span:nth-child(4){height:14px;}
+  .modem .bars span:nth-child(5){height:17px;}
+  .modem .kbps { color: #7ff6c0; }
+
+  /* ── three-column body (left nav · main · right stats rail) ── */
+  .body-tbl { display: flex; align-items: stretch; }
+  .sidenav { width: 184px; flex: 0 0 184px; padding: 9px; background: var(--beige); border-right: 2px solid var(--navy); }
+  .maincol { flex: 1 1 auto; min-width: 0; padding: 11px; }
+  .siderail { width: 196px; flex: 0 0 196px; padding: 9px; background: var(--beige); border-left: 2px solid var(--navy); }
+  @media (max-width: 1040px) {
+    .body-tbl { flex-direction: column; }
+    .sidenav, .siderail { width: auto; flex: none; border-right: 0; border-left: 0; border-bottom: 2px solid var(--navy); }
+  }
+
+  /* ── sidebar modules ── */
+  .side-mod { margin-bottom: 12px; }
+  .side-mod h3 {
+    margin: 0; padding: 3px 8px; color: #fff; text-transform: uppercase;
+    font: 700 11px/1.6 Verdana, Arial, sans-serif; letter-spacing: .5px;
+    background: linear-gradient(180deg, var(--royal), var(--navy)); border: 1px solid var(--navy);
+  }
+  .side-mod ul {
+    list-style: none; margin: 0; padding: 5px 4px;
+    background: #fff; border: 1px solid #8893b5; border-top: 0; font: 12px/1.75 Georgia, serif;
+  }
+  .side-mod li { padding: 1px 4px; }
+  .side-mod li::before { content: "\00BB\00A0"; color: var(--royal); }
+  .newbadge {
+    display: inline-block; margin-left: 4px; padding: 0 4px; color: #fff; background: #cc0000;
+    font: 700 9px Verdana, sans-serif; letter-spacing: .5px; animation: blink 1s steps(2, start) infinite;
+  }
+  .counter { padding: 7px; text-align: center; background: #fff; border: 1px solid #8893b5; border-top: 0; }
+  .counter .lcd {
+    display: inline-block; padding: 3px 7px; background: #000; color: #21d04a;
+    font: 700 16px "Courier New", monospace; letter-spacing: 3px; border: 2px inset #444;
+  }
+  .counter .cap { display: block; margin-top: 4px; font: 10px Verdana, sans-serif; color: #555; }
+  .counter .online { display: block; margin-top: 5px; font: 10px Verdana, sans-serif; color: #1d7a3d; }
+  .counter .online b { color: #cc0000; }
+  .bestview { padding: 7px 2px; text-align: center; font: 10px/1.5 Verdana, sans-serif; color: #444; }
+
+  /* ── web-ring box ── */
+  .ringbox { padding: 7px; text-align: center; background: #fff; border: 1px solid #8893b5; border-top: 0; font: 11px Verdana, sans-serif; color: #333; }
+  .ringbox .rname { font-weight: 700; color: #10205a; display: block; margin-bottom: 4px; }
+  .ringbox .rnav a { text-decoration: none; font-weight: 700; }
+  .ringbox .rpos { display: block; margin-top: 4px; color: #777; font-size: 10px; }
+
+  /* ── award badges ── */
+  .awards { padding: 8px; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; background: #fff; border: 1px solid #8893b5; border-top: 0; }
+  .award {
+    width: 70px; height: 44px; display: flex; align-items: center; justify-content: center; text-align: center;
+    color: #fff; font: 700 8px/1.15 Verdana, sans-serif; letter-spacing: .3px; border: 2px outset #aaa;
+  }
+  .award.a1 { background: linear-gradient(135deg, #7a1020, #c0303f); }
+  .award.a2 { background: linear-gradient(135deg, #0a5a2a, #1f9a4f); }
+  .award.a3 { background: linear-gradient(135deg, #5a3a00, #b3851f); }
+
+  /* ── main content modules (navy box + beveled blue title bar) ── */
+  .module { margin-bottom: 12px; background: #fff; border: 2px solid var(--rule); }
+  .module > .bar-title {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 10px; color: #fff; text-transform: uppercase;
+    font: 700 12px/1.5 Verdana, Arial, sans-serif; letter-spacing: .6px;
+    background: linear-gradient(180deg, #3a63d6 0%, var(--royal) 50%, var(--navy) 100%);
+    border-bottom: 2px solid var(--navy);
+  }
+  .module > .bar-title .right { font: 400 10px Verdana, sans-serif; color: #cfe0ff; text-transform: none; letter-spacing: 0; }
+  .module > .pane { padding: 12px 14px; }
+  .mod-2col { display: flex; gap: 12px; margin-bottom: 12px; }
+  .mod-2col > .module { flex: 1 1 0; min-width: 0; margin-bottom: 0; }
+  @media (max-width: 620px) {
+    .mod-2col { flex-direction: column; }
+    .mod-2col > .module { margin-bottom: 12px; }
+  }
+  /* responsive metric grid — fills the full page width (FI · Tremor · Energy · Loco) */
+  .mod-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(238px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .mod-grid > .module { margin-bottom: 0; min-width: 0; }
+
+  /* ── GAIT STATUS (JS toggles .freeze / .still on #state) ── */
+  .state { text-align: center; padding: 14px 10px; background: #f6f8fc; border: 1px solid #cfd6e6; transition: background .2s, border-color .2s; }
+  .state.freeze { background: #ffe2e5; border-color: #f1a9b1; }
+  .state.still  { background: #e2f3f6; border-color: #9bd6da; }
+  .state .val {
+    font: 700 clamp(42px, 6vw, 76px)/1 Georgia, "Times New Roman", serif; letter-spacing: 1px;
+    color: var(--walk); margin: 2px 0 10px; text-shadow: 0 1px 0 rgba(255,255,255,.9); transition: color .2s;
+  }
+  .state.freeze .val { color: var(--freeze); }
+  .state.still  .val { color: var(--still); }
+
+  /* ── plain-language severity badge (JS sets className = 'status ' + sev) ── */
+  .status {
+    display: inline-flex; align-items: center; gap: 7px; margin: 2px 0 12px; padding: 5px 12px;
+    font: 700 13px Verdana, Arial, sans-serif; color: var(--ink);
+    background: #fff; border: 2px outset #d7ddec;
+  }
+  .status .sdot { width: 11px; height: 11px; border-radius: 50%; background: #7f8aa8; border: 1px solid #00031f; }
+  .status .sscore { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 700; }
+  .status.green { color: #1d7a3d; border-color: #9bd6b4; }
+  .status.green .sdot { background: #2faa57; box-shadow: 0 0 5px rgba(47,170,87,.55); }
+  .status.amber { color: #9a6a00; border-color: #e7c64a; }
+  .status.amber .sdot { background: #f0b400; box-shadow: 0 0 5px rgba(240,180,0,.6); }
+  .status.red { color: #b3293a; border-color: #f1a9b1; }
+  .status.red .sdot { background: #e23b48; box-shadow: 0 0 7px rgba(226,59,72,.65); }
+  .status.rest { color: var(--muted); }
+
+  /* ── cue pill (JS toggles .on on #cue) ── */
+  .cue-pill {
+    display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px;
+    font: 700 12px Verdana, Arial, sans-serif; letter-spacing: .4px; color: var(--muted);
+    background: #eef1f8; border: 2px outset #d7ddec;
+  }
+  .cue-pill.on {
+    color: #7a5200; background: #fff3c4; border-color: #e7c64a;
+    box-shadow: 0 0 8px rgba(240,190,40,.7); animation: blink 1.1s steps(2, start) infinite;
+  }
+  .cue-pill .buzz { width: 10px; height: 10px; border-radius: 50%; background: #7f8aa8; border: 1px solid #00031f; }
+  .cue-pill.on .buzz { background: #f0b400; box-shadow: 0 0 6px #f0b400; }
+
+  /* ── freeze-probability gauge (#prob-bar fill, #prob-val readout) ── */
+  .bar { height: 24px; overflow: hidden; position: relative; background: #dfe4ef; border: 2px inset #b7c0d6; }
+  .bar > span { display: block; height: 100%; width: 0%; transition: width .2s;
+                background: linear-gradient(90deg, #2faa57 0%, #ffd23b 55%, #e23b48 100%); }
+  .bar-val { font: 700 30px Georgia, serif; color: var(--ink); margin-top: 9px; }
+
+  /* ── big metric numbers ── */
+  .big-num { font: 700 38px/1 Georgia, serif; color: var(--ink); }
+  .unit { font: 400 13px Verdana, sans-serif; color: var(--muted); margin-left: 5px; }
+  .lbl { font: 700 10px Verdana, Arial, sans-serif; letter-spacing: .8px; text-transform: uppercase; color: var(--steelbar); margin-bottom: 6px; }
+
+
+  /* ── canvas "screens" — beveled monitor bezel; canvas sizing left to JS ── */
+  .screen { border: 2px inset #b7c0d6; background: #fbfcfe; }
+  /* explicit canvas heights — without these a canvas with width:100% scales its
+     height by the attribute aspect-ratio, which balloons at full-page width.
+     fitCanvas() reads clientHeight, so a fixed CSS height is authoritative. */
+  canvas { width: 100%; display: block; height: 56px; }
+  #wave { height: 210px; }
+  .legend { display: flex; gap: 14px; align-items: center; margin-top: 8px; font: 11px Verdana, sans-serif; color: var(--muted); }
+  .legend i { display: inline-block; width: 12px; height: 4px; margin-right: 5px; vertical-align: middle; border: 1px solid rgba(0,0,0,.25); }
+  .note { margin-top: 8px; font: italic 11px Georgia, serif; color: var(--muted); }
+  .note code { font: 11px "Courier New", monospace; font-style: normal; color: #10205a;
+               background: #eef1f8; padding: 0 3px; border: 1px solid #c7cee0; }
+
+  /* ── field recorder (live → phase-labelled CSV; matches the worksheet capture) ── */
+  .rec-row { display: flex; align-items: center; gap: 9px; font: 12px Verdana, sans-serif; color: var(--text); }
+  .rec-dot { width: 12px; height: 12px; border-radius: 50%; background: #8893b5; border: 1px solid #00031f; flex: none; }
+  .rec-row.on .rec-dot { background: #e23b48; box-shadow: 0 0 8px rgba(226,59,72,.8);
+                         animation: blink 1.1s steps(2, start) infinite; }
+  .rec-state { font: 700 12px Verdana, sans-serif; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); }
+  .rec-row.on .rec-state { color: #b3293a; }
+  .rec-file { font: 12px "Courier New", monospace; color: var(--ink); }
+  .rec-meta { font: 12px "Courier New", monospace; color: var(--muted); }
+  .rec-ctl { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 11px; }
+  .rec-name { font: 12px Verdana, sans-serif; padding: 4px 7px; border: 2px inset #c7cee0; width: 220px; }
+  .rec-btn { font: 700 12px Verdana, sans-serif; padding: 5px 13px; color: #10205a; cursor: pointer;
+             background: linear-gradient(180deg, #fbfcff, #c9d2e6); border: 2px outset #eef2fb; }
+  .rec-btn:active { border-style: inset; }
+  .rec-btn:disabled { color: #8a90a2; cursor: default; background: #e7eaf2; border-color: #d4d9e6; }
+  .rec-start { color: #8a1020; }
+  .rec-start:disabled { color: #8a90a2; }
+  .rec-phase { margin-top: 10px; font: 12px Verdana, sans-serif; color: var(--muted); }
+  .rec-phase b { color: var(--ink); font-size: 14px; font-variant-numeric: tabular-nums; }
+
+  /* ── footer ── */
+  .footer { padding: 11px 12px; text-align: center; background: var(--beige); border-top: 2px solid var(--navy);
+            font: 11px/1.6 Verdana, Geneva, sans-serif; color: #3a3a3a; }
+  .footer .extras { margin-bottom: 8px; font: 11px Verdana, sans-serif; }
+  .footer .extras .midi { color: #444; }
+  .footer .badges { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .footer .badge { padding: 3px 7px; color: #fff; background: #333; border: 1px outset #888;
+                   font: 700 9px/1.2 "Courier New", monospace; }
+  .footer .badge.b1 { background: var(--royal); }
+  .footer .badge.b2 { background: #7a1020; }
+  .footer .badge.b3 { background: #0a5a2a; }
+  .footer .badge.b4 { background: #5a3a00; }
+  .footer .badge.b5 { background: #6a0a6a; }
+  .footer .copy { font-family: Georgia, serif; color: #222; }
+
+  /* ── sparkle cursor trail ── */
+  .sparkle { position: absolute; pointer-events: none; z-index: 9999; font-size: 13px; color: #ffd23b;
+             text-shadow: 0 0 4px #fff, 0 0 8px #ffd23b; animation: spk .7s linear forwards; }
+</style>
+</head>
+<body>
+<div class="site">
+
+  <!-- ── masthead ── -->
+  <div class="masthead">
+    <div class="brand">
+      <div class="wm">
+        <!-- spinning WWW globe (inline SVG sprite — continents scroll, no network) -->
+        <svg class="gif-globe pixel" viewBox="0 0 32 32" role="img" aria-label="World Wide Web globe">
+          <defs>
+            <clipPath id="globeclip"><circle cx="16" cy="16" r="15"/></clipPath>
+            <g id="globeland" fill="#2faa57">
+              <rect x="3" y="9" width="5" height="4"/><rect x="6" y="13" width="4" height="5"/>
+              <rect x="12" y="6" width="6" height="3"/><rect x="14" y="16" width="5" height="7"/>
+              <rect x="22" y="10" width="5" height="4"/><rect x="24" y="18" width="3" height="6"/>
+              <rect x="9" y="22" width="4" height="3"/>
+            </g>
+          </defs>
+          <circle cx="16" cy="16" r="15" fill="#1b6fd0" stroke="#04265e" stroke-width="2"/>
+          <g clip-path="url(#globeclip)">
+            <g class="spin"><use href="#globeland"/><use href="#globeland" x="32"/></g>
+            <g fill="none" stroke="#bfe0ff" stroke-width="1" opacity=".65">
+              <ellipse cx="16" cy="16" rx="15" ry="6"/><line x1="1" y1="16" x2="31" y2="16"/>
+              <ellipse cx="16" cy="16" rx="6" ry="15"/>
+            </g>
+          </g>
+          <circle cx="11" cy="10" r="3.5" fill="#fff" opacity=".22"/>
+        </svg>
+        Cadence<span class="dot">.</span>net<sup>&trade;</sup>
+        <!-- 2-frame walking mascot (sprite sheet, clipped + stepped — ties to gait) -->
+        <svg class="gif-walk pixel" viewBox="0 0 16 24" role="img" aria-label="Walking figure">
+          <defs><clipPath id="walkclip"><rect x="0" y="0" width="16" height="24"/></clipPath></defs>
+          <circle cx="8" cy="4" r="3" fill="#ffd23b"/>
+          <rect x="6" y="7" width="4" height="8" fill="#fff"/>
+          <rect x="4" y="8" width="2" height="6" fill="#cfe0ff"/><rect x="10" y="8" width="2" height="6" fill="#cfe0ff"/>
+          <g clip-path="url(#walkclip)">
+            <g class="legs" fill="#fff">
+              <rect x="5" y="15" width="2" height="8"/><rect x="9" y="15" width="2" height="8"/>
+              <rect x="22" y="15" width="2" height="8"/><rect x="24" y="15" width="2" height="8"/>
+            </g>
+          </g>
+        </svg>
+      </div>
+      <div class="tag">Parkinson's Gait Garment &middot; Live Clinical Monitor</div>
+    </div>
+    <div class="corner">
+      <div class="clock" id="clock">--:--:--</div>
+      <div>Monitoring station&nbsp;01</div>
+      <div class="conn" id="conn"><span class="dot"></span><span id="conn-txt">connecting&hellip;</span></div>
+    </div>
+  </div>
+
+  <!-- ── nav ── -->
+  <div class="navbar">
+    <a class="btn" href="#">Home</a>
+    <a class="btn" href="#">Live Monitor</a>
+    <a class="btn" href="#">About FoG</a>
+    <a class="btn" href="#">For Clinicians</a>
+    <a class="btn" href="#">Tremor Log</a>
+    <a class="btn" href="#">Downloads</a>
+    <a class="btn" href="#">Support</a>
+    <span class="blink">&#9679;&nbsp;LIVE</span>
+    <span class="navtools">
+      <input class="srch" type="text" placeholder="Search Cadence.net&hellip;" aria-label="Search site">
+      <button class="go" type="button">Go</button>
+      <select class="jump" aria-label="Quick jump">
+        <option>Quick Jump&hellip;</option>
+        <option>Live Monitor</option>
+        <option>Gait State Log</option>
+        <option>Tremor History</option>
+        <option>Device Setup</option>
+      </select>
+    </span>
+  </div>
+
+  <!-- ── ticker ── -->
+  <div class="ticker"><span>&#9733; Welcome to Cadence Online &#9733; &nbsp; &#9670; &nbsp; Real-time freezing-of-gait detection &amp; live monitoring &nbsp; &#9670; &nbsp; Sensor: ankle accelerometer @ 64&nbsp;Hz &nbsp; &#9670; &nbsp; Movement-energy gate &mdash; a freeze only counts once activity clears the calibrated floor &nbsp; &#9670; &nbsp; ~50% of people with Parkinson's experience freezing of gait &nbsp; &#9670; &nbsp; On-board Freeze Index detector &mdash; OLED &amp; dashboard show the live freeze category &nbsp; &#9670; &nbsp; This station is monitoring &mdash; please do not close the window &nbsp; &#9733;</span></div>
+
+  <!-- ── body ── -->
+  <div class="body-tbl">
+
+    <!-- left navigation column -->
+    <div class="sidenav">
+      <div class="side-mod">
+        <h3>Quick Links</h3>
+        <ul>
+          <li><a href="#">Live Monitor</a></li>
+          <li><a href="#">Gait State Log</a></li>
+          <li><a href="#">Tremor History</a></li>
+          <li><a href="#">Episode Replay</a></li>
+          <li><a href="#">Device Setup</a></li>
+          <li><a href="#">Help / FAQ</a></li>
+        </ul>
+      </div>
+      <div class="side-mod">
+        <h3>FoG Resources</h3>
+        <ul>
+          <li><a href="#">What is freezing?</a></li>
+          <li><a href="#">Freeze Index method</a><span class="newbadge">NEW</span>
+            <svg class="gif-flame pixel" viewBox="0 0 12 18" aria-hidden="true">
+              <path d="M6 0 C8 4 10 5 10 10 a4 4 0 0 1-8 0 C2 6 4 6 6 0Z" fill="#ff7a18"/>
+              <path d="M6 6 C7 8 8 9 8 11.5 a2 2 0 0 1-4 0 C4 9 5 9 6 6Z" fill="#ffd23b"/>
+            </svg></li>
+          <li><a href="#">Daphnet dataset</a></li>
+          <li><a href="#">Moore et al. 2008</a></li>
+          <li><a href="#">Apple MDM API</a></li>
+        </ul>
+      </div>
+      <div class="side-mod">
+        <h3>Web Ring</h3>
+        <div class="ringbox">
+          <span class="rname">Parkinson's Care WebRing</span>
+          <span class="rnav"><a href="#">&#8249;&nbsp;Prev</a> | <a href="#">Random</a> | <a href="#">Next&nbsp;&#8250;</a></span>
+          <span class="rpos">this site is #7 of 24</span>
+        </div>
+      </div>
+      <div class="side-mod">
+        <h3>Awards</h3>
+        <div class="awards">
+          <span class="award a1">COOL<br>MEDICAL<br>SITE '02</span>
+          <span class="award a2">Y2K<br>COMPLIANT</span>
+          <span class="award a3">EDITOR'S<br>PICK</span>
+        </div>
+      </div>
+      <div class="side-mod">
+        <h3>Site Stats</h3>
+        <div class="counter">
+          <span class="lcd tabnums">00013827</span>
+          <span class="cap">visitors since 1996</span>
+          <span class="online"><b id="online">4</b> visitors online now</span>
+        </div>
+        <div class="bestview">
+          Best viewed at 800&times;600<br>Netscape&nbsp;4 / IE&nbsp;5<br>
+          <span class="newbadge">ONLINE</span>
+        </div>
+      </div>
+      <div class="side-mod">
+        <h3>Connection</h3>
+        <div class="modem">
+          <div class="row"><span>LINK</span><span class="bars"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on" id="bar4"></span><span id="bar5"></span></span></div>
+          <div class="row"><span>RATE</span><span class="kbps">56.6&nbsp;kbps</span></div>
+          <div class="row"><span>PING</span><span class="kbps" id="ping">38&nbsp;ms</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- main content column -->
+    <div class="maincol">
+
+      <!-- GAIT STATUS + FREEZE PROBABILITY (side by side) -->
+      <div class="mod-2col">
+        <div class="module">
+          <div class="bar-title">Gait Status <span class="right">closed-loop</span></div>
+          <div class="pane">
+            <div class="state" id="state">
+              <div class="val" id="state-val">&mdash;</div>
+              <div class="status" id="plain-status"><span class="sdot"></span><span class="stext">&mdash;</span><span class="sscore"></span></div>
+              <div><span class="cue-pill" id="cue"><span class="buzz"></span><span id="cue-txt">cue idle</span></span></div>
+            </div>
+          </div>
+        </div>
+        <div class="module">
+          <div class="bar-title">Freeze Margin <span class="right">live FI vs trip line</span></div>
+          <div class="pane">
+            <div class="bar"><span id="prob-bar"></span></div>
+            <div class="bar-val tabnums" id="prob-val">&mdash;</div>
+            <div class="note" id="model-note"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FREEZE INDEX · TREMOR · MOVEMENT ENERGY · LOCOMOTION (auto-fit grid, fills the page) -->
+      <div class="mod-grid">
+        <div class="module">
+          <div class="bar-title">Freeze Index <span class="right">3&ndash;8 / 0.5&ndash;3 Hz</span></div>
+          <div class="pane">
+            <div><span class="big-num tabnums" id="fi-val">&mdash;</span></div>
+            <div class="screen"><canvas id="fi-spark" height="56"></canvas></div>
+          </div>
+        </div>
+        <div class="module">
+          <div class="bar-title">Tremor Power <span class="right">4&ndash;6 Hz</span></div>
+          <div class="pane">
+            <div><span class="big-num tabnums" id="tremor-val">&mdash;</span><span class="unit">mg&sup2;</span></div>
+            <!-- rest-tremor present/clear badge (JS sets className from m.tremor_present) -->
+            <div class="status rest" id="tremor-status" style="margin:3px 0 6px; font:700 11px Verdana,Arial,sans-serif; padding:3px 9px">
+              <span class="sdot"></span><span class="stext">awaiting data</span>
+            </div>
+            <div class="screen"><canvas id="tremor-spark" height="56"></canvas></div>
+          </div>
+        </div>
+        <div class="module">
+          <div class="bar-title">Movement Energy <span class="right">0.5&ndash;8 Hz band</span></div>
+          <div class="pane">
+            <div><span class="big-num tabnums" id="energy-val" style="color:var(--energy)">&mdash;</span><span class="unit">mg&sup2;</span></div>
+            <!-- standing-still gate: energy above the calibrated floor = MOVING, below = STILL -->
+            <div class="status rest" id="gate-status" style="margin:3px 0 6px; font:700 11px Verdana,Arial,sans-serif; padding:3px 9px">
+              <span class="sdot"></span><span class="stext">awaiting data</span>
+            </div>
+            <div class="screen"><canvas id="energy-spark" height="56"></canvas></div>
+          </div>
+        </div>
+        <div class="module">
+          <div class="bar-title">Locomotion Power <span class="right">0.5&ndash;3 Hz band</span></div>
+          <div class="pane">
+            <div><span class="big-num tabnums" id="loco-val" style="color:var(--loco)">&mdash;</span><span class="unit">mg&sup2;</span></div>
+            <div class="screen"><canvas id="loco-spark" height="56"></canvas></div>
+          </div>
+        </div>
+      </div>
+      <div class="note" id="energy-note" style="margin: -4px 2px 12px;">Movement energy is the 0.5&ndash;8 Hz band power of the ankle accelerometer; the standing-still gate keeps the monitor reading STILL until energy clears the calibrated floor &mdash; so a freeze is only flagged during genuine movement.</div>
+
+      <!-- ACCELEROMETER WAVEFORM (full width) -->
+      <div class="module">
+        <div class="bar-title">Accelerometer <span class="right">raw &middot; 64 Hz</span></div>
+        <div class="pane">
+          <div class="screen"><canvas id="wave" height="210"></canvas></div>
+          <div class="legend">
+            <span><i style="background:var(--ax)"></i>x</span>
+            <span><i style="background:var(--ay)"></i>y</span>
+            <span><i style="background:var(--az)"></i>z</span>
+            <span id="stats" style="margin-left:auto"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- FIELD RECORDER — save a phase-labelled CSV of the live stream -->
+      <div class="module">
+        <div class="bar-title">Field Recorder <span class="right">saves a capture-style CSV</span></div>
+        <div class="pane">
+          <div class="rec-row" id="rec-row">
+            <span class="rec-dot"></span>
+            <span class="rec-state" id="rec-state">idle</span>
+            <span class="rec-file" id="rec-file">&mdash;</span>
+            <span class="rec-meta" id="rec-meta" style="margin-left:auto">&mdash;</span>
+          </div>
+          <div class="rec-ctl">
+            <input class="rec-name" id="rec-name" type="text" placeholder="file name (optional, e.g. capture2)" aria-label="recording name">
+            <button class="rec-btn rec-start" id="rec-start" type="button">&#9679; Record</button>
+            <button class="rec-btn rec-next"  id="rec-next"  type="button" disabled>&#9654; Mark next phase</button>
+            <button class="rec-btn rec-stop"  id="rec-stop"  type="button" disabled>&#9632; Stop &amp; save</button>
+          </div>
+          <div class="rec-phase">current phase <b id="rec-phase-n">0</b> &middot; <span id="rec-seg">0</span> segment(s) marked</div>
+          <div class="note">Hotkeys: <b>R</b> record/stop &middot; <b>N</b> or <b>Space</b> mark next phase. Bump a new phase each time the activity changes (still&nbsp;&rarr;&nbsp;walk&nbsp;&rarr;&nbsp;freeze&nbsp;&rarr;&nbsp;walk), exactly like the board&rsquo;s RIGHT button. Files land in <code>accuracy_figs/captures/</code> &mdash; analyse with <code>python analyze_worksheet.py</code>.</div>
+        </div>
+      </div>
+
+    </div><!-- /maincol -->
+
+    <!-- right rail - live session monitor (device stats desk) -->
+    <div class="siderail">
+      <div class="side-mod">
+        <h3>Freeze Episodes</h3>
+        <div class="scorebox">
+          <span class="num tabnums" id="fz-count">000</span>
+          <span class="latest" id="fz-latest">Latest: <b>&mdash;</b></span>
+        </div>
+      </div>
+      <div class="side-mod">
+        <h3>Time in State</h3>
+        <div class="scorers">
+          <div class="r"><span class="rk" style="color:var(--walk)">&#9679;</span><span class="nm">Walking</span><span class="g tabnums" id="t-walk" style="color:var(--walk)">0:00</span></div>
+          <div class="r"><span class="rk" style="color:var(--still)">&#9679;</span><span class="nm">Still</span><span class="g tabnums" id="t-still" style="color:var(--still)">0:00</span></div>
+          <div class="r"><span class="rk" style="color:var(--freeze)">&#9679;</span><span class="nm">Freeze</span><span class="g tabnums" id="t-freeze" style="color:var(--freeze)">0:00</span></div>
+        </div>
+      </div>
+      <div class="side-mod">
+        <h3>Last Episode</h3>
+        <div class="result">
+          <span class="rl">Most recent freeze</span>
+          <div class="sc tabnums" id="last-ep">&mdash;</div>
+          <span class="meta" id="last-ep-meta">no freezes yet this session</span>
+        </div>
+      </div>
+      <div class="side-mod">
+        <h3>Device</h3>
+        <div class="scorers">
+          <div class="r"><span class="nm">Sensor</span><span class="g" style="color:#10205a">LIS3DH</span></div>
+          <div class="r"><span class="nm">Sample rate</span><span class="g" style="color:#10205a">64 Hz</span></div>
+          <div class="r"><span class="nm">Window</span><span class="g" style="color:#10205a">4 s / 2 s</span></div>
+          <div class="r"><span class="nm">Detector</span><span class="g" style="color:#10205a">Freeze Index</span></div>
+          <div class="r"><span class="nm">Readout</span><span class="g" style="color:#10205a">OLED + LEDs</span></div>
+        </div>
+      </div>
+      <div class="side-mod">
+        <h3>Your Choice</h3>
+        <div class="poll">
+          <div class="stars" id="rate" title="Rate this station">
+            <span data-v="1">&#9733;</span><span data-v="2">&#9733;</span><span data-v="3">&#9733;</span><span data-v="4">&#9733;</span><span data-v="5">&#9733;</span>
+          </div>
+          <span class="ptip" id="rate-tip">rate this monitoring station</span>
+        </div>
+      </div>
+    </div><!-- /siderail -->
+  </div><!-- /body-tbl -->
+
+  <!-- ── footer ── -->
+  <div class="footer">
+    <div class="extras">
+      <a href="#">&#9997; Sign our Guestbook</a> &nbsp;&middot;&nbsp;
+      <a href="mailto:webmaster@cadence.net">&#9993; webmaster@cadence.net</a> &nbsp;&middot;&nbsp;
+      <span class="midi">&#9834; now playing: cadence_theme.mid <a href="#" id="midi-toggle">[stop]</a></span>
+    </div>
+    <div class="badges">
+      <span class="badge b1">BEST VIEWED IN<br>NETSCAPE 4</span>
+      <span class="badge b2">MADE WITH<br>NOTEPAD</span>
+      <span class="badge b3">VALID<br>HTML 4.01</span>
+      <span class="badge b4">POWERED BY<br>WEBSOCKETS</span>
+      <span class="badge b5">Y2K<br>READY</span>
+    </div>
+    <div class="copy">&copy; 1996&ndash;2002 Cadence Systems &middot; ENGF0031 Scenario&nbsp;2 &middot; All Rights Reserved.</div>
+    <div>This monitoring station updates in real time. &nbsp;&middot;&nbsp; Last rebuilt: 02&nbsp;Jun&nbsp;2002</div>
+    <div style="margin-top:5px; font:10px 'Courier New',monospace; color:#7a7f8c;">page generated in <span id="gentime">0.04</span>s by Cadence&#8209;Engine/1.0 &middot; HTTP/1.1 200 OK</div>
+  </div>
+
+</div><!-- /site -->
+
+<script>
+const WAVE_LEN = 64 * 8;          // 8 s of accel on screen
+const SPARK_LEN = 120;            // ~1 min of FI / tremor at 2 Hz
+const accel = [[], [], []];
+const fiHist = [], tremorHist = [], energyHist = [], locoHist = [];
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v);
+
+function pushCap(arr, v, cap) { arr.push(v); if (arr.length > cap) arr.splice(0, arr.length - cap); }
+
+function fitCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); return [ctx, w, h];
+}
+
+function drawWave() {
+  const cv = document.getElementById('wave');
+  const [ctx, w, h] = fitCanvas(cv);
+  ctx.clearRect(0, 0, w, h);
+  const cols = ['--ax', '--ay', '--az'].map(css);
+  let max = 1;
+  for (const ch of accel) for (const v of ch) max = Math.max(max, Math.abs(v));
+  const mid = h / 2, scale = (h * 0.46) / max;
+  ctx.lineWidth = 1.4;
+  for (let c = 0; c < 3; c++) {
+    const data = accel[c]; if (!data.length) continue;
+    ctx.beginPath(); ctx.strokeStyle = cols[c];
+    for (let i = 0; i < data.length; i++) {
+      const x = (i / (WAVE_LEN - 1)) * w, y = mid - data[i] * scale;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+  }
+}
+
+function drawSpark(id, hist, color, logScale) {
+  const cv = document.getElementById(id);
+  const [ctx, w, h] = fitCanvas(cv);
+  ctx.clearRect(0, 0, w, h);
+  if (!hist.length) return;
+  const vals = logScale ? hist.map(v => Math.log10(1 + v)) : hist;
+  const max = Math.max(...vals, 1e-6), min = Math.min(...vals, 0);
+  const rng = (max - min) || 1;
+  ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 1.6;
+  for (let i = 0; i < vals.length; i++) {
+    const x = (i / (SPARK_LEN - 1)) * w, y = h - 4 - ((vals[i] - min) / rng) * (h - 8);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function render() {
+  drawWave();
+  drawSpark('fi-spark', fiHist, css('--freeze'), false);
+  drawSpark('tremor-spark', tremorHist, css('--az'), true);
+  drawSpark('energy-spark', energyHist, css('--energy'), true);
+  drawSpark('loco-spark', locoHist, css('--loco'), true);
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+
+// ── live clock (peak Y2K) ──
+function tick() {
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  document.getElementById('clock').textContent =
+    '▸ ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+setInterval(tick, 1000); tick();
+
+// ── "visitors online" jitter ──
+function jitterOnline() { document.getElementById('online').textContent = 3 + Math.floor(Math.random() * 6); }
+setInterval(jitterOnline, 5000); jitterOnline();
+
+// ── faux MIDI toggle (no audio — period flavour only) ──
+document.getElementById('midi-toggle').addEventListener('click', (e) => {
+  e.preventDefault();
+  e.target.textContent = e.target.textContent === '[stop]' ? '[play]' : '[stop]';
+});
+
+// ── "rate this site" star poll (cosmetic — no backend) ──
+(function () {
+  const wrap = document.getElementById('rate'); if (!wrap) return;
+  const stars = [...wrap.querySelectorAll('span')];
+  const tip = document.getElementById('rate-tip');
+  let locked = 0;
+  const paint = (n) => stars.forEach((s, i) => s.classList.toggle('lit', i < n));
+  stars.forEach((s) => {
+    const v = +s.dataset.v;
+    s.addEventListener('mouseenter', () => paint(v));
+    s.addEventListener('click', () => { locked = v; paint(v); tip.textContent = 'thanks for voting! ★ ' + v + '/5'; });
+  });
+  wrap.addEventListener('mouseleave', () => paint(locked));
+})();
+
+// ── faux 56k modem: jitter ping + the weakest signal bar ──
+(function () {
+  const ping = document.getElementById('ping'), bar5 = document.getElementById('bar5'), bar4 = document.getElementById('bar4');
+  if (!ping) return;
+  setInterval(() => {
+    ping.innerHTML = (28 + Math.floor(Math.random() * 34)) + '&nbsp;ms';
+    const strong = Math.random() > 0.4;
+    bar4.classList.toggle('on', strong);
+    bar5.classList.toggle('on', strong && Math.random() > 0.6);
+  }, 2200);
+})();
+
+// ── faux "page generated in" server time ──
+(function () { const g = document.getElementById('gentime'); if (g) g.textContent = (0.02 + Math.random() * 0.09).toFixed(2); })();
+
+// ── sparkle cursor trail ──
+(function () {
+  const chars = ['✦', '✧', '+', '·'];
+  let last = 0;
+  addEventListener('pointermove', (e) => {
+    const now = performance.now();
+    if (now - last < 55) return; last = now;
+    const s = document.createElement('span');
+    s.className = 'sparkle';
+    s.textContent = chars[Math.random() * chars.length | 0];
+    s.style.left = e.pageX + 'px'; s.style.top = e.pageY + 'px';
+    document.body.appendChild(s);
+    setTimeout(() => s.remove(), 700);
+  }, { passive: true });
+})();
+
+// ── live session monitor (right-rail stats) ──
+// Everything here is computed from the gate-aware `state` the server already
+// sends — no cueing dependency (this build is a MONITOR; the coin-motor cue is
+// disabled) and nothing fabricated. A freeze "episode" is one rising edge into
+// FREEZE; time-in-state accrues from wall-clock deltas between control frames.
+const ss = { prev: null, last: 0, episodes: 0, epStart: 0,
+             t: { WALKING: 0, STILL: 0, FREEZE: 0 } };
+function _mmss(ms) {
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  const mm = h ? String(m).padStart(2, '0') : String(m);
+  return (h ? h + ':' : '') + mm + ':' + String(sec).padStart(2, '0');
+}
+function _hms(d) {
+  return String(d.getHours()).padStart(2, '0') + ':' +
+         String(d.getMinutes()).padStart(2, '0') + ':' +
+         String(d.getSeconds()).padStart(2, '0');
+}
+function updateSessionStats(state) {
+  const now = Date.now();
+  // credit the elapsed interval to whatever state we were already in
+  if (ss.prev !== null && ss.t.hasOwnProperty(ss.prev)) ss.t[ss.prev] += now - ss.last;
+  ss.last = now;
+  if (state === 'FREEZE' && ss.prev !== 'FREEZE') {          // rising edge → new episode
+    ss.episodes++;  ss.epStart = now;
+    document.getElementById('fz-count').textContent = String(ss.episodes).padStart(3, '0');
+    document.getElementById('fz-latest').innerHTML = 'Latest: <b>' + _hms(new Date()) + '</b>';
+  } else if (state !== 'FREEZE' && ss.prev === 'FREEZE') {   // falling edge → episode ended
+    const dur = (now - ss.epStart) / 1000;
+    document.getElementById('last-ep').textContent = dur.toFixed(1) + ' s';
+    document.getElementById('last-ep-meta').textContent =
+      'episode #' + ss.episodes + ' · ended ' + _hms(new Date());
+  }
+  ss.prev = state;
+  document.getElementById('t-walk').textContent   = _mmss(ss.t.WALKING);
+  document.getElementById('t-still').textContent  = _mmss(ss.t.STILL);
+  document.getElementById('t-freeze').textContent = _mmss(ss.t.FREEZE);
+}
+
+// ── WebSocket ──
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  const conn = document.getElementById('conn'), txt = document.getElementById('conn-txt');
+  ws.onopen = () => { conn.classList.add('live'); txt.textContent = 'live'; };
+  ws.onclose = () => { conn.classList.remove('live'); txt.textContent = 'reconnecting…'; setTimeout(connect, 1200); };
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === 'waveform') {
+      for (const s of m.accel) for (let c = 0; c < 3; c++) pushCap(accel[c], s[c], WAVE_LEN);
+    } else if (m.type === 'control') {
+      const stateEl = document.getElementById('state'), valEl = document.getElementById('state-val');
+      // The server sends the authoritative, gate-aware state. Fall back to a
+      // local derivation only for an older server that didn't send `state`.
+      const state = m.state || (
+        (m.has_model ? m.prob_freeze >= 0.5 : m.freeze_index > 1.815) ? 'FREEZE' : 'WALKING');
+      stateEl.classList.toggle('freeze', state === 'FREEZE');
+      stateEl.classList.toggle('still', state === 'STILL');
+      valEl.textContent = state;
+      updateSessionStats(state);   // right-rail: episode count + time-in-state + last episode
+      // plain-language severity badge (presentation only — reads the same live data)
+      const ps = document.getElementById('plain-status');
+      let plain, score, sev;
+      if (state === 'STILL')                        { plain = 'At rest';              score = '';      sev = 'rest';  }
+      else if (state === 'FREEZE' || m.cueing)      { plain = 'Freezing — assisting'; score = '· 5/5'; sev = 'red';   }
+      else if (m.has_model && m.prob_freeze >= 0.5) { plain = 'Hesitating';           score = '· 3/5'; sev = 'amber'; }
+      else                                          { plain = 'Walking freely';       score = '· 1/5'; sev = 'green'; }
+      ps.className = 'status ' + sev;
+      ps.querySelector('.stext').textContent = plain;
+      ps.querySelector('.sscore').textContent = score;
+      const cue = document.getElementById('cue');
+      cue.classList.toggle('on', !!m.cueing);
+      document.getElementById('cue-txt').textContent = m.cueing ? 'CUE ACTIVE ▶ vibrating' : 'cue idle';
+      // Freeze Margin: live Freeze Index as a share of the deployed trip line —
+      // the glass-box decision signal (replaces the bypassed-CNN probability box).
+      {
+        const thr = Number(m.fi_threshold) || 1.815;
+        const fi  = Number(m.freeze_index) || 0;
+        if (m.state === 'STILL') {
+          document.getElementById('prob-bar').style.width = '0%';
+          document.getElementById('prob-val').textContent = '—';
+          document.getElementById('model-note').textContent = 'At rest — freeze check paused by the movement gate.';
+        } else {
+          const pct = Math.max(0, Math.min(100, Math.round(fi / thr * 100)));
+          document.getElementById('prob-bar').style.width = pct + '%';
+          document.getElementById('prob-val').textContent = pct + '%';
+          document.getElementById('model-note').textContent =
+            'Freeze Index ' + fi.toFixed(2) + ' vs ' + thr.toFixed(2) + ' trip — 100% = freeze.';
+        }
+      }
+      document.getElementById('fi-val').textContent = Number(m.freeze_index || 0).toFixed(2);
+      document.getElementById('tremor-val').textContent = Number(m.tremor || 0).toFixed(0);
+      // rest-tremor present/clear badge — driven by the detector's debounced flag
+      // (mirrors the CPX LED scheme: grey = uncalibrated, green = clear, amber = tremor).
+      const tstat = document.getElementById('tremor-status');
+      if (tstat) {
+        const thr = m.tremor_threshold || 0;
+        let tsev, ttext;
+        if (thr <= 0)              { tsev = 'rest';  ttext = 'uncalibrated'; }
+        else if (m.tremor_present) { tsev = 'amber'; ttext = 'TREMOR present'; }
+        else                       { tsev = 'green'; ttext = 'no tremor'; }
+        tstat.className = 'status ' + tsev;
+        tstat.querySelector('.stext').textContent = ttext;
+      }
+      pushCap(fiHist, Number(m.freeze_index || 0), SPARK_LEN);
+      pushCap(tremorHist, Number(m.tremor || 0), SPARK_LEN);
+      // movement energy (0.5–8 Hz band power) + the standing-still gate decision
+      document.getElementById('energy-val').textContent = Number(m.energy || 0).toFixed(0);
+      document.getElementById('loco-val').textContent   = Number(m.loco || 0).toFixed(0);
+      const gstat = document.getElementById('gate-status');
+      if (gstat) {
+        const floor = m.still_floor || 0;
+        let gsev, gtext;
+        if (floor <= 0)            { gsev = 'rest';  gtext = 'gate off'; }
+        else if (m.energy > floor) { gsev = 'green'; gtext = 'MOVING'; }
+        else                       { gsev = 'rest';  gtext = 'STILL'; }
+        gstat.className = 'status ' + gsev;
+        gstat.querySelector('.stext').textContent = gtext;
+      }
+      pushCap(energyHist, m.energy, SPARK_LEN);
+      pushCap(locoHist, m.loco, SPARK_LEN);
+    } else if (m.type === 'stats') {
+      document.getElementById('stats').textContent =
+        `${m.samples.toLocaleString()} samples @ ${m.fs} Hz` + (m.active ? '' : ' · no device');
+      if (m.rec) applyRecStatus(m.rec);
+    }
+  };
+}
+
+// ── Field Recorder: drive POST /rec/* and reflect status from the stats feed ──
+const recEls = {
+  row:    document.getElementById('rec-row'),
+  state:  document.getElementById('rec-state'),
+  file:   document.getElementById('rec-file'),
+  meta:   document.getElementById('rec-meta'),
+  name:   document.getElementById('rec-name'),
+  start:  document.getElementById('rec-start'),
+  next:   document.getElementById('rec-next'),
+  stop:   document.getElementById('rec-stop'),
+  phaseN: document.getElementById('rec-phase-n'),
+  seg:    document.getElementById('rec-seg'),
+};
+let recOn = false;
+function applyRecStatus(r) {
+  if (!r) return;
+  recOn = !!r.recording;
+  recEls.row.classList.toggle('on', recOn);
+  recEls.state.textContent = recOn ? 'recording' : 'idle';
+  recEls.file.textContent  = r.file || '—';
+  const n = (r.samples || 0).toLocaleString(), s = (r.seconds || 0).toFixed(1);
+  recEls.meta.textContent  = recOn ? `${n} samples · ${s} s`
+                           : (r.file ? `saved · ${n} samples` : '—');
+  recEls.phaseN.textContent = r.phase ?? 0;
+  recEls.seg.textContent    = r.segments ?? 0;
+  recEls.start.disabled = recOn;
+  recEls.name.disabled  = recOn;
+  recEls.next.disabled  = !recOn;
+  recEls.stop.disabled  = !recOn;
+}
+async function recPost(path) {
+  try { applyRecStatus(await (await fetch(path, { method: 'POST' })).json()); }
+  catch (e) { /* server busy/offline — the next stats tick re-syncs */ }
+}
+recEls.start.addEventListener('click', () => {
+  const nm = recEls.name.value.trim();
+  recPost('/rec/start' + (nm ? '?name=' + encodeURIComponent(nm) : ''));
+});
+recEls.next.addEventListener('click', () => recPost('/rec/next'));
+recEls.stop.addEventListener('click', () => recPost('/rec/stop'));
+addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  const k = e.key.toLowerCase();
+  if (k === 'r')                                   { e.preventDefault(); recOn ? recPost('/rec/stop') : recEls.start.click(); }
+  else if ((k === 'n' || e.code === 'Space') && recOn) { e.preventDefault(); recPost('/rec/next'); }
+});
+// one-shot sync so the panel is correct before the first stats broadcast
+fetch('/rec/status').then(r => r.json()).then(applyRecStatus).catch(() => {});
+
+connect();
+</script>
+</body>
+</html>

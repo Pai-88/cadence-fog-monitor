@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CADENCE — CPX recording downloader</title>
+<style>
+  :root { --bg:#0f1420; --card:#19202e; --ink:#e8edf6; --mut:#8da0bd;
+          --ok:#39d98a; --warn:#ffb454; --bad:#ff5d6c; --accent:#4ea1ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;
+         background:var(--bg); color:var(--ink); }
+  .wrap { max-width:760px; margin:0 auto; padding:28px 20px 60px; }
+  h1 { font-size:24px; margin:0 0 4px; }
+  .sub { color:var(--mut); margin:0 0 22px; }
+  .card { background:var(--card); border-radius:14px; padding:20px;
+          margin-bottom:18px; border:1px solid #243044; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  button { font-size:16px; font-weight:600; border:0; border-radius:10px;
+           padding:13px 20px; cursor:pointer; color:#08101f; background:var(--accent); }
+  button.alt  { background:#2b3a55; color:var(--ink); }
+  button.ok   { background:var(--ok); }
+  button.warn { background:var(--warn); }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  .pill { display:inline-block; padding:4px 12px; border-radius:999px; font-size:14px;
+          font-weight:600; background:#2b3a55; color:var(--mut); }
+  .pill.on  { background:rgba(57,217,138,.15); color:var(--ok); }
+  .pill.off { background:rgba(255,93,108,.15); color:var(--bad); }
+  label { display:block; font-size:13px; color:var(--mut); margin:0 0 6px; }
+  input[type=text] { font-size:16px; padding:11px 12px; border-radius:9px; width:240px;
+          border:1px solid #2f3e57; background:#0e1726; color:var(--ink); }
+  .stat { display:grid; grid-template-columns:auto 1fr; gap:4px 16px; margin-top:8px;
+          font-variant-numeric:tabular-nums; }
+  .stat b { color:var(--mut); font-weight:600; }
+  pre#log { background:#0b1320; border:1px solid #233047; border-radius:10px; padding:14px;
+            height:220px; overflow:auto; margin:0; font-size:13px; white-space:pre-wrap;
+            color:#c7d4ea; }
+  .hint { color:var(--mut); font-size:14px; }
+  .big { font-size:34px; font-weight:700; }
+  a.code { color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CADENCE — download your CPX recording</h1>
+  <p class="sub">Record untethered on the board (slide switch). Then plug the CPX into
+     this computer, click <b>Connect</b>, and click <b>Download CSV</b>. No terminal needed.</p>
+
+  <div class="card">
+    <div class="row">
+      <button id="btnConnect">1 · Connect to CPX</button>
+      <span id="connState" class="pill off">not connected</span>
+    </div>
+    <p class="hint" id="connHint" style="margin:12px 0 0">
+      Use <b>Google&nbsp;Chrome</b> or <b>Edge</b>. A picker opens — choose the
+      <b>usbmodem…</b> entry (that's the board).</p>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <button id="btnStatus" class="alt" disabled>2 · Check recording</button>
+      <span id="statePill" class="pill">—</span>
+    </div>
+    <div class="stat" id="statBox" style="display:none">
+      <b>samples</b><span id="sSamples">—</span>
+      <b>duration</b><span id="sDur">—</span>
+      <b>rate</b><span id="sRate">—</span>
+      <b>flash</b><span id="sFlash">—</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <label for="fname">File name</label>
+    <div class="row">
+      <input id="fname" type="text" value="cadence_capture" />
+      <button id="btnDownload" class="ok" disabled>3 · Download CSV</button>
+    </div>
+    <div class="big" id="progress" style="margin-top:12px; color:var(--mut)">—</div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <span class="hint">Activity log</span>
+      <button id="btnErase" class="warn" disabled style="padding:7px 14px; font-size:14px">Erase board</button>
+    </div>
+    <pre id="log"></pre>
+  </div>
+
+  <p class="hint">If the Connect button does nothing or errors about a “secure context”,
+     serve this file from localhost instead: open Terminal in the <code>pi</code> folder, run
+     <code>python3 -m http.server 8000</code>, then visit
+     <a class="code" href="http://localhost:8000/cpx_download.html">localhost:8000/cpx_download.html</a>.</p>
+</div>
+
+<script>
+const BAUD = 115200;
+let port = null, writer = null, reader = null, keepReading = false;
+let lineBuf = "", lineQueue = [];
+
+const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function log(m){ const el=$("log"); el.textContent += m + "\n"; el.scrollTop = el.scrollHeight; }
+
+if (!("serial" in navigator)) {
+  log("⚠ This browser has no Web Serial. Use Chrome or Edge on desktop.");
+  $("connHint").innerHTML = "<b style='color:#ff5d6c'>Web Serial not available.</b> " +
+    "Open this page in desktop <b>Chrome</b> or <b>Edge</b>.";
+}
+
+async function readLoop(){
+  const decoder = new TextDecoder();
+  try {
+    reader = port.readable.getReader();
+    while (keepReading) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      lineBuf += decoder.decode(value, { stream:true });
+      let i;
+      while ((i = lineBuf.indexOf("\n")) >= 0) {
+        lineQueue.push(lineBuf.slice(0, i).replace(/\r$/, ""));
+        lineBuf = lineBuf.slice(i + 1);
+      }
+    }
+  } catch(e){ log("read error: " + e.message); }
+  finally { try { reader.releaseLock(); } catch(_){} }
+}
+function drain(){ lineQueue = []; lineBuf = ""; }
+async function send(cmd){ await writer.write(new TextEncoder().encode(cmd + "\n")); }
+
+// collect lines until predicate(line) is true; returns {hit, lines}
+async function collect(predicate, {idleMs=8000, maxMs=180000, onLine}={}){
+  const lines = []; const t0 = performance.now(); let last = performance.now();
+  while (true) {
+    while (lineQueue.length) {
+      const ln = lineQueue.shift(); last = performance.now(); lines.push(ln);
+      if (onLine) onLine(ln, lines.length);
+      if (predicate(ln)) return { hit: ln, lines };
+    }
+    if (performance.now() - last > idleMs) return { hit: null, lines };
+    if (performance.now() - t0  > maxMs)  return { hit: null, lines };
+    await sleep(20);
+  }
+}
+
+$("btnConnect").onclick = async () => {
+  try {
+    port = await navigator.serial.requestPort();        // user picks the usbmodem port
+    await port.open({ baudRate: BAUD });
+    try { await port.setSignals({ dataTerminalReady:true, requestToSend:true }); } catch(_){}
+    keepReading = true; readLoop();
+    writer = port.writable.getWriter();
+    log("Connected. Settling 1.5 s…");
+    await sleep(1500); drain();
+    $("connState").className = "pill on"; $("connState").textContent = "connected";
+    $("btnStatus").disabled = false; $("btnDownload").disabled = false; $("btnErase").disabled = false;
+    port.addEventListener("disconnect", () => {
+      $("connState").className="pill off"; $("connState").textContent="disconnected";
+      $("btnStatus").disabled=$("btnDownload").disabled=$("btnErase").disabled=true;
+      log("Board disconnected.");
+    });
+    await checkStatus();   // auto-status on connect
+  } catch(e){ log("Connect cancelled / failed: " + e.message); }
+};
+
+async function checkStatus(){
+  drain(); await send("STATUS");
+  const { hit } = await collect(l => l.startsWith("#STATUS"), { idleMs:4000, maxMs:6000 });
+  if (!hit) {
+    $("statePill").className="pill off"; $("statePill").textContent="no reply — recording? try slide switch OFF";
+    log("No #STATUS reply — the board may still be recording (it ignores USB while logging). Slide the switch OFF, then retry.");
+    return null;
+  }
+  const n = +( /samples=(\d+)/.exec(hit)?.[1] ?? 0 );
+  const rate = +( /rate_hz=(\d+)/.exec(hit)?.[1] ?? 64 );
+  const fk = +( /flash_kb=(\d+)/.exec(hit)?.[1] ?? 0 );
+  $("statBox").style.display = "grid";
+  $("sSamples").textContent = n;
+  $("sDur").textContent = rate ? (n/rate).toFixed(1) + " s" : "—";
+  $("sRate").textContent = rate + " Hz";
+  $("sFlash").textContent = fk + " KB";
+  if (n > 0){ $("statePill").className="pill on";  $("statePill").textContent = n + " samples stored ✓"; }
+  else      { $("statePill").className="pill off"; $("statePill").textContent = "empty — record first"; }
+  log(`Status: ${n} samples (${rate?(n/rate).toFixed(1):"?"} s) on ${fk} KB flash.`);
+  return n;
+}
+$("btnStatus").onclick = checkStatus;
+
+$("btnDownload").onclick = async () => {
+  $("progress").textContent = "starting…";
+  drain(); await send("DUMP");
+  let analyze = null;
+  const { hit, lines } = await collect(l => l.startsWith("#END"), {
+    idleMs:8000, maxMs:180000,
+    onLine: (ln, k) => {
+      if (ln.startsWith("# analyze:")) analyze = ln;
+      if (ln.startsWith("#ERR")) log("Device: " + ln);
+      if (k % 250 === 0) $("progress").textContent = k + " lines…";
+    }
+  });
+  const rows = lines.filter(l => l && !l.startsWith("#") && !l.startsWith("idx,"));
+  if (rows.length === 0) {
+    $("progress").textContent = "no data";
+    log("No rows received. If you just recorded, slide the switch OFF first, Check recording, then Download.");
+    return;
+  }
+  let name = ($("fname").value || "cadence_capture").trim();
+  if (!name.endsWith(".csv")) name += ".csv";
+  const blob = new Blob([lines.join("\n") + "\n"], { type:"text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(a.href);
+  const endN = hit ? +( /#END,(\d+)/.exec(hit)?.[1] ?? rows.length ) : null;
+  $("progress").textContent = rows.length + " rows ✓";
+  log(`Saved "${name}" — ${rows.length} data rows` + (endN!=null && endN!==rows.length ? ` (⚠ device said ${endN})` : "") + ". Check your Downloads folder.");
+  if (analyze) log("To score it: analyze_worksheet.py <file> " + analyze.replace("# analyze:","").trim() + " --threshold 1.815");
+};
+
+$("btnErase").onclick = async () => {
+  if (!confirm("Erase the stored recording on the board? This cannot be undone.")) return;
+  drain(); await send("ERASE");
+  await collect(l => l.startsWith("#OK") || l.startsWith("#ERR"), { idleMs:4000, maxMs:6000 });
+  log("Erase sent.");
+  await checkStatus();
+};
+</script>
+</body>
+</html>

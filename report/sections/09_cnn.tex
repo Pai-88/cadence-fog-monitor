@@ -1,0 +1,296 @@
+\section{The CNN: FoGNet Architecture}
+\label{sec:cnn}
+
+The shipped detector is a \emph{glass box}: one hand-chosen ratio, the freeze index,
+compared against one hand-chosen trip line. That transparency is a feature, not a
+bug --- a clinician can read off exactly why a window was flagged. But it also fixes
+the rules in advance. The $3$--$8$\,\unit{\hertz} freeze band, the $0.5$--$3$\,\unit{\hertz}
+locomotor band and the simple ``ratio of powers'' shape were all decided by us, not
+discovered from data. \textbf{FoGNet} asks the opposite question: \emph{given more
+time, could a network learn the right temporal filters for itself, straight from the
+raw accelerometer trace?} This section walks the architecture end to end. It is the
+``given more time'' upgrade --- a study of what a learned model buys --- and is
+\emph{not} the detector that runs on the ankle.
+
+\begin{intuition}
+The freeze index is a single filter we designed by hand: ``measure energy in
+$3$--$8$\,\unit{\hertz}, divide by energy in $0.5$--$3$\,\unit{\hertz}.'' A
+convolutional network is a stack of \emph{many small filters whose shapes are
+learned}. Instead of telling the model which frequency band matters, we show it
+thousands of labelled $4$-second clips and let gradient descent sculpt the filters
+that best separate freezing from walking. The freeze index is one filter we wrote;
+FoGNet is sixteen-plus filters it wrote itself.
+\end{intuition}
+
+\subsection{Why a CNN, and why 1-D}
+
+The accelerometer hands us a \emph{time series}: three channels ($a_x, a_y, a_z$)
+sampled at $64$\,\unit{\hertz}. A freeze episode is a \emph{local temporal pattern} ---
+a burst of rapid $3$--$8$\,\unit{\hertz} trembling --- that can appear anywhere inside
+the $4$-second window. Three properties of a 1-D convolutional network match this
+problem almost exactly:
+
+\begin{itemize}
+  \item \textbf{Locality.} A freeze is defined by what neighbouring samples do
+  \emph{relative to each other} (a fast oscillation), not by their absolute time
+  index. Convolution looks at short local stretches, which is the right unit of
+  analysis.
+  \item \textbf{Weight sharing.} The same small filter slides across the whole
+  window, so a tremor at $0.5$\,\unit{\second} and the identical tremor at
+  $3.5$\,\unit{\second} are scored by the \emph{same} weights. This is far more
+  data-efficient than a dense layer that would have to relearn the pattern at every
+  offset.
+  \item \textbf{Translation invariance} (completed by global pooling, below): a
+  freeze \emph{anywhere} in the window should count as a freeze.
+\end{itemize}
+
+We use \emph{1-D} convolution because time is the one axis we slide along; the three
+accelerometer axes are treated as input \emph{channels} (like the R/G/B channels of
+an image), all read together by every filter.
+
+\begin{keyidea}
+FoGNet never sees a Welch spectrum, a band, or the freeze index. Its input is the
+\emph{raw} $3\times256$ window --- three axes $\times$ $4$\,\unit{\second} at
+$64$\,\unit{\hertz} --- exactly the bytes the LIS3DH produced. Any notion of
+``frequency band'' it ends up using is something it \emph{learned}, not something we
+supplied.
+\end{keyidea}
+
+\subsection{What one convolution actually does}
+
+Picture a short filter --- say $15$ samples wide --- as a little template laid over
+the signal. You multiply the filter against the $15$ samples beneath it, add the
+products into a single number, then shift one sample to the right and repeat. Slide
+all the way along and you get a new, slightly shorter trace: the filter's
+\emph{response}. Where the signal locally resembles the template, the response spikes;
+elsewhere it stays near zero. A filter tuned to a $\sim5$\,\unit{\hertz} wobble will
+light up precisely during a freeze and stay quiet during a smooth stride.
+
+\begin{mathsbox}
+For an input channel $x[n]$ and a learned filter $w$ of length $K$ (here a
+\code{Conv1d} cross-correlation), the output at position $n$ is
+\begin{equation}
+  y[n] \;=\; b \;+\; \sum_{c=1}^{C_{\text{in}}}\;\sum_{k=0}^{K-1}
+           w_{c}[k]\, x_{c}[\,n+k\,],
+  \label{eq:conv}
+\end{equation}
+summed over all $C_{\text{in}}$ input channels. The weights $w_c[k]$ and the bias $b$
+are \emph{the things learned by backprop}; nothing about them is fixed in advance.
+With $C_{\text{out}}$ such filters in a layer, the output has $C_{\text{out}}$
+channels --- one response trace per filter. In FoGNet's first layer $C_{\text{in}}=3$
+(the axes), $K=15$, and $C_{\text{out}}=16$, so $16$ different $15$-sample templates
+sweep the window simultaneously.
+\end{mathsbox}
+
+Each convolution is followed by two cheap, essential operations:
+\textbf{BatchNorm}, which re-centres and re-scales each channel so training stays
+numerically stable, and a \textbf{ReLU} nonlinearity, $\mathrm{ReLU}(z)=\max(0,z)$,
+which clips negatives to zero. The ReLU is what lets the stack learn patterns more
+intricate than the freeze index's single ratio: without it, any stack of convolutions
+would collapse into one equivalent linear filter.
+
+\subsection{Stacking blocks: wider receptive fields}
+
+One $15$-sample filter sees only $15/64 \approx 0.23$\,\unit{\second} of signal at a
+time --- enough for one or two tremor cycles, not a whole episode. Depth fixes this.
+After the first two convolution blocks FoGNet applies \textbf{max-pooling} (stride
+$2$), which keeps the strongest response in each adjacent pair and halves the length
+of the trace. A filter in the next layer, still only a few samples wide, now spans
+\emph{twice} as much real time, because each sample it reads already summarises two
+original samples. Stack the effect and the \emph{receptive field} --- the slice of the
+original $4$\,\unit{\second} that one deep activation can ``see'' --- grows from a
+fraction of a second to a large span of the window. Early filters catch fine
+texture (the wobble itself); deep filters catch coarse structure (a sustained burst
+of wobble), which is exactly what distinguishes a freeze from a single misstep.
+
+\begin{intuition}
+Max-pooling is a deliberate, useful blur. By throwing away \emph{where exactly} the
+peak response sat inside each little pair and keeping only \emph{how strong} it was,
+the network stops caring about sub-sample timing and starts caring about whether the
+freeze texture is present at all. Cheaper to compute, and more robust.
+\end{intuition}
+
+\subsection{FoGNet, end to end}
+
+Figure~\ref{fig:fognet} draws the whole network. The data starts wide and shallow
+(a long $256$-sample window, only $3$ channels) and ends short and deep (time mostly
+pooled away, $64$ learned channels), before being collapsed to a single freeze
+probability. Three trends run left to right: \emph{time shrinks} (pooling),
+\emph{channels grow} ($3\!\to\!16\!\to\!32\!\to\!64$, more learned features), and
+\emph{kernels narrow} ($15\!\to\!9\!\to\!5$, because deeper samples already cover more
+real time).
+
+\begin{figure}[H]
+\centering
+\resizebox{0.97\textwidth}{!}{%
+\begin{tikzpicture}[font=\sffamily]
+  % ---- helpers -------------------------------------------------------------
+  \tikzset{
+    flab/.style={font=\footnotesize\bfseries,text=navy,align=center},
+    dlab/.style={font=\scriptsize,text=mute,align=center},
+    op/.style={->,>=Latex,thick,steel},
+  }
+
+  % ---- tensor volumes: \cnnvol{cx}{halfw}{halfh}{front}{back} ---------------
+  % INPUT  3 x 256  (tall, thin)
+  \cnnvol{0}{0.22}{2.0}{fill=teal!28,draw=teal!75!black,line width=0.5pt}{fill=teal!14,draw=teal!55!black,line width=0.5pt}
+  % BLOCK 1  -> 16 ch, time 256 (drawn medium tall, medium wide)
+  \cnnvol{2.6}{0.55}{1.55}{fill=navy!26,draw=navy!75!black,line width=0.5pt}{fill=navy!13,draw=navy!55!black,line width=0.5pt}
+  % BLOCK 2  -> 32 ch, time pooled
+  \cnnvol{5.4}{0.85}{1.05}{fill=navy!26,draw=navy!75!black,line width=0.5pt}{fill=navy!13,draw=navy!55!black,line width=0.5pt}
+  % BLOCK 3  -> 64 ch, time pooled more
+  \cnnvol{8.1}{1.15}{0.62}{fill=navy!26,draw=navy!75!black,line width=0.5pt}{fill=navy!13,draw=navy!55!black,line width=0.5pt}
+  % GAP -> 64-vector (thin tall bar)
+  \cnnvol{10.4}{0.16}{1.15}{fill=purple!26,draw=purple!75!black,line width=0.5pt}{fill=purple!13,draw=purple!60!black,line width=0.5pt}
+  % Dense 32
+  \cnnvol{11.9}{0.13}{0.62}{fill=purple!26,draw=purple!75!black,line width=0.5pt}{fill=purple!13,draw=purple!60!black,line width=0.5pt}
+  % Output 2 logits
+  \cnnvol{13.2}{0.10}{0.22}{fill=freeze!26,draw=freeze!80!black,line width=0.5pt}{fill=freeze!13,draw=freeze!60!black,line width=0.5pt}
+
+  % ---- block labels (above) -------------------------------------------------
+  \node[flab] at (0,2.55) {Input\\$3\times256$};
+  \node[dlab] at (0,-2.5) {raw 3-axis\\$4$\,s @ $64$\,Hz};
+
+  \node[flab] at (2.6,2.55) {Conv block 1\\$3\!\to\!16$};
+  \node[dlab] at (2.6,-2.5) {$K{=}15$, BN,\\ReLU, pool$\times2$};
+
+  \node[flab] at (5.4,2.55) {Conv block 2\\$16\!\to\!32$};
+  \node[dlab] at (5.4,-2.5) {$K{=}9$, BN,\\ReLU, pool$\times2$};
+
+  \node[flab] at (8.1,2.55) {Conv block 3\\$32\!\to\!64$};
+  \node[dlab] at (8.1,-2.5) {$K{=}5$, BN,\\ReLU};
+
+  \node[flab] at (10.4,2.55) {GAP\\$\to 64$};
+  \node[dlab,anchor=north] at (10.4,-1.45) {mean over\\time};
+
+  \node[flab] at (11.9,2.55) {Dense\\$64\!\to\!32$};
+  \node[dlab,anchor=north] at (11.9,-1.45) {ReLU,\\Drop $0.3$};
+
+  \node[flab,text=freeze] at (13.35,2.55) {Logits\\$32\!\to\!2$};
+  \node[dlab,anchor=north] at (13.35,-1.45) {softmax\\$\to P(\text{freeze})$};
+
+  % ---- flow arrows ----------------------------------------------------------
+  \draw[op] (0.45,0) -- (1.95,0);
+  \draw[op] (3.25,0) -- (4.45,0);
+  \draw[op] (6.35,0) -- (6.85,0);
+  \draw[op] (9.35,0) -- (10.15,0);
+  \draw[op] (10.6,0) -- (11.7,0);
+  \draw[op] (12.06,0) -- (13.05,0);
+
+  % ---- group brace: convolutional feature extractor ------------------------
+  \draw[decorate,decoration={brace,amplitude=5pt,mirror},steel,thick]
+        (-0.35,-3.15) -- (9.4,-3.15)
+        node[midway,below=6pt,font=\footnotesize\bfseries,text=steel]
+        {learned feature extractor (translation-aware)};
+  \draw[decorate,decoration={brace,amplitude=5pt,mirror},purple,thick]
+        (9.9,-3.15) -- (13.45,-3.15)
+        node[midway,below=6pt,font=\footnotesize\bfseries,text=purple]
+        {classifier head};
+\end{tikzpicture}}
+\caption{\textbf{FoGNet, a 1-D CNN ($\sim$18k parameters).} Tensor volumes shrink in
+time and grow in channels left to right. Three \texttt{Conv$\to$BN$\to$ReLU} blocks
+($3\!\to\!16\!\to\!32\!\to\!64$ channels, kernels $15/9/5$, max-pool after the first
+two) extract learned temporal features; global average pooling collapses each of the
+$64$ channels to one number, which a small dense head maps to two logits and a
+softmax freeze probability. Runs in under $1$\,ms on a laptop CPU.}
+\label{fig:fognet}
+\end{figure}
+
+\subsection{Global average pooling: a freeze anywhere counts}
+
+After the third block the network holds $64$ response traces. Rather than flatten them
+(which would tie every feature to a fixed time slot and explode the parameter count),
+FoGNet takes the \textbf{global average} of each trace --- one mean value per channel,
+a single $64$-vector.
+
+\begin{keyidea}
+Global average pooling (GAP) is what makes FoGNet \emph{translation-invariant}. A
+freeze that erupts at second $1$ and the same freeze at second $3$ produce strong
+responses at different \emph{positions}, but their channel \emph{averages} are nearly
+identical. So a freeze ``anywhere in the window still counts'' --- which is exactly the
+behaviour the windowed detector wants, and it sidesteps the dilution problem a fixed
+position-sensitive layer would suffer.
+\end{keyidea}
+
+The $64$-vector then flows through the classifier head:
+$\text{Linear}(64\!\to\!32)\to\text{ReLU}\to\text{Dropout}(0.3)\to\text{Linear}(32\!\to\!2)$.
+Dropout randomly mutes $30\%$ of the $32$ hidden units during training, forcing the
+head not to lean on any single feature --- a regulariser against overfitting the
+modest dataset. The final layer emits two raw scores (\emph{logits}), and softmax
+turns them into a probability:
+\begin{equation}
+  P(\text{freeze}) \;=\; \frac{e^{z_{1}}}{e^{z_{0}}+e^{z_{1}}},
+  \label{eq:softmax}
+\end{equation}
+where $z_0,z_1$ are the ``no-freeze'' and ``freeze'' logits. The whole forward pass is
+tiny --- about $18$k parameters --- and completes in under $1$\,\unit{\milli\second} on
+a laptop CPU.
+
+\begin{table}[H]
+\centering
+\caption{FoGNet layer-by-layer. Time shrinks via pooling; channel count grows; the
+classifier head turns the $64$ pooled features into a freeze probability.}
+\label{tab:fognet}
+\small
+\begin{tabular}{@{}llcc@{}}
+\toprule
+\textbf{Stage} & \textbf{Operation} & \textbf{Kernel} & \textbf{Channels (out)} \\
+\midrule
+Input        & raw 3-axis window               & ---  & $3$  \\
+Conv block 1 & Conv1d, BN, ReLU, max-pool$\times2$ & $15$ & $16$ \\
+Conv block 2 & Conv1d, BN, ReLU, max-pool$\times2$ & $9$  & $32$ \\
+Conv block 3 & Conv1d, BN, ReLU                 & $5$  & $64$ \\
+Pooling      & global average pooling          & ---  & $64$ (vector) \\
+Head         & Linear, ReLU, Dropout $0.3$     & ---  & $32$ \\
+Output       & Linear $\to$ softmax            & ---  & $2$ logits \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{How it is trained and how it scores}
+
+FoGNet is trained on the public \textbf{Daphnet} FoG dataset (Bachlin
+et~al.\ 2010). Each labelled $3\times256$ window is pushed forward to a probability;
+the \emph{binary cross-entropy} loss penalises confident wrong answers; and
+gradient descent / backprop nudges every filter weight and bias --- the $w_c[k]$ of
+Eq.~\eqref{eq:conv} --- a little in the direction that lowers the loss. Crucially, we
+evaluate with \textbf{Leave-One-Subject-Out (LOSO)} cross-validation: the network is
+tested on a person it never trained on, the honest test of whether the learned filters
+\emph{generalise} rather than memorise one gait.
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}{0.485\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{confusion_matrix}
+  \caption{Pooled LOSO confusion ($n=8982$ windows).}
+  \label{fig:cnn-cm}
+\end{subfigure}\hfill
+\begin{subfigure}{0.485\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{per_subject}
+  \caption{Per-subject scores: generalisation varies by person.}
+  \label{fig:cnn-persubj}
+\end{subfigure}
+\caption{FoGNet under Leave-One-Subject-Out. Pooling the held-out folds gives
+$\mathrm{TN}=6842$, $\mathrm{FP}=1285$, $\mathrm{FN}=248$, $\mathrm{TP}=607$:
+sensitivity $0.71$, specificity $0.84$, accuracy $0.83$.}
+\label{fig:cnn-results}
+\end{figure}
+
+Pooling the held-out folds gives the confusion matrix in
+Figure~\ref{fig:cnn-cm}: out of $8982$ windows, $\mathrm{TP}=607$,
+$\mathrm{FN}=248$, $\mathrm{TN}=6842$, $\mathrm{FP}=1285$. That is a
+\textbf{sensitivity of $0.71$}, a \textbf{specificity of $0.84$} and an accuracy of
+$0.83$. As argued throughout this report, sensitivity and specificity --- not raw
+accuracy --- are the metrics that matter when freezes are rare; the per-subject spread
+in Figure~\ref{fig:cnn-persubj} is the more sobering view, showing how much
+generalisation depends on the individual.
+
+\begin{takeaway}
+FoGNet \emph{learns} its temporal filters from raw accelerometer windows instead of
+relying on one fixed ratio, and global average pooling lets a freeze anywhere in the
+window count. It is the ``given more time'' study --- a sub-millisecond, $\sim$18k-param
+network ($0.71$ sensitivity, $0.84$ specificity under LOSO) --- and it is deliberately
+\emph{not} what ships on the ankle, where the transparent freeze-index detector runs.
+\end{takeaway}

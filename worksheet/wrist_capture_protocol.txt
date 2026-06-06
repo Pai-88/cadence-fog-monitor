@@ -1,0 +1,90 @@
+================================================================================
+  Cadence — WRIST rest-tremor capture protocol  (ENGF0031 Accuracy Worksheet)
+================================================================================
+This produces the REAL data the wrist worksheet needs. Nothing in the worksheet
+is invented: you record ~40 s on the wrist, run analyze_tremor.py, and paste the
+numbers it prints. Until you do this, the worksheet numbers stay blank.
+
+Mirrors the ankle FoG protocol exactly (still/walk/freeze/walk), but on the WRIST
+and with a tremor surrogate instead of a freeze surrogate.
+
+--------------------------------------------------------------------------------
+  WHERE TO WEAR IT
+--------------------------------------------------------------------------------
+Strap the Circuit Playground Express to the back of the WRIST, like a watch face
+(USB cable trailing up the forearm). Sit down, forearm resting on a table or
+armrest so the limb is genuinely supported — resting tremor is a tremor of a limb
+AT REST, so the "rest" baseline must really be at rest.
+
+--------------------------------------------------------------------------------
+  THE 4 PHASES  (~10 s each — keep each >= 8 s so it yields several 4 s windows)
+--------------------------------------------------------------------------------
+  Phase 0  REST     forearm supported, hand relaxed and still.        (baseline)
+  Phase 1  TREMOR   forearm still on the table; oscillate the HAND     (POSITIVE)
+                    rapidly at ~5 Hz (a small, fast shake — a few cm,
+                    ~5 shakes/second). Do NOT move the whole arm.
+  Phase 2  MOVE     normal voluntary movement: reach, wave, pick up    (confound)
+                    a cup. Larger, slower motion than the tremor.
+  Phase 3  TREMOR   repeat phase 1, to check consistency.              (POSITIVE)
+
+Why this set: REST = noise floor; MOVE is the confound that must NOT read as
+tremor (the worksheet's false-positive question); TREMOR appears twice so you can
+show the detector responds the same way both times. ~5 Hz sits in the 4-6 Hz
+Parkinsonian rest-tremor band the feature measures.
+
+HONEST LIMITATION (state this in Task 1): a healthy subject cannot produce a
+genuine Parkinsonian rest tremor, so phase 1/3 is a SURROGATE — a voluntary ~5 Hz
+hand oscillation. The aim is to prove the DSP cleanly separates a 4-6 Hz tremor
+from rest and from ordinary movement. Real-patient validation is the next step.
+
+--------------------------------------------------------------------------------
+  HOW TO RECORD  — option A: RAM logger (simplest, same as the ankle capture)
+--------------------------------------------------------------------------------
+Identical to how capture1.csv was made; no Wi-Fi / ESP32 needed, just USB.
+
+  1. Flash firmware/cpx_accel_logger/cpx_accel_logger.ino (already used for FoG).
+  2. From pi/ run:
+        python capture_worksheet.py --prefix wrist --outdir accuracy_figs/captures
+  3. On the board: RIGHT button = start / mark the next phase, LEFT = stop & dump.
+        RIGHT (phase 0, REST)  -> ~10 s
+        RIGHT (phase 1, TREMOR)-> ~10 s
+        RIGHT (phase 2, MOVE)  -> ~10 s
+        RIGHT (phase 3, TREMOR)-> ~10 s
+        LEFT  (stop & dump)
+     The script saves accuracy_figs/captures/wrist1.csv. (RAM caps one capture at
+     ~47 s, so keep the four phases to ~10 s each.)
+
+--------------------------------------------------------------------------------
+  HOW TO RECORD  — option B: live Field Recorder (no length cap)
+--------------------------------------------------------------------------------
+Use this if you want longer phases or to watch the trace live. Needs the
+streaming path up (CPX -> ESP32 -> Wi-Fi -> laptop, or USB DEBUG_USB=1).
+
+  1. From pi/ run:  python dashboard_server.py     then open dashboard.html.
+  2. In the "Field Recorder" panel type the name  wrist1  and press R (Record)
+     [or POST /rec/start?name=wrist1].
+  3. At each phase change press N or Space (Mark next phase) [or POST /rec/next].
+     Do the same 4 phases as above (you can hold each ~30 s here).
+  4. Press R again to Stop & save [or POST /rec/stop].
+     File lands in pi/accuracy_figs/captures/wrist1.csv.
+
+--------------------------------------------------------------------------------
+  TURN THE CAPTURE INTO WORKSHEET NUMBERS
+--------------------------------------------------------------------------------
+From pi/ :
+
+  python analyze_tremor.py accuracy_figs/captures/wrist1.csv \
+      --labels rest,tremor,move,tremor --tremor-phases 1,3
+
+It prints (all REAL, from your trace):
+  * Task 4 — tremor power per phase (mean / median / max / n windows)
+  * Task 5 — the suggested threshold and the TP / FP / FN / TN confusion matrix
+             -> sensitivity & specificity   <-- the worksheet headline
+and writes  accuracy_figs/wrist1_tremor_trace.pdf  (the Task 3 figure) and
+            accuracy_figs/wrist1_tremor_windows.csv.
+
+Then, in worksheet/accuracy_worksheet_wrist.tex, replace every  <<...>>  marker
+with these real numbers, copy wrist1_tremor_trace.pdf into worksheet/figs/, set
+TREMOR_THRESHOLD in pi/tremor_detector.py to the suggested threshold, and compile:
+  tectonic accuracy_worksheet_wrist.tex
+================================================================================

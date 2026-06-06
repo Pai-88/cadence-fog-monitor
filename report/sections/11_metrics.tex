@@ -1,0 +1,254 @@
+\section{Measuring Accuracy: Confusion, Sensitivity \& Specificity}
+\label{sec:metrics}
+
+Every detector in this report --- the shipped on-board freeze-index rule, the
+glass-box RandomForest, and the FoGNet CNN --- ultimately hands down the same kind of
+verdict: for each 4-second window it answers \emph{freeze} or \emph{no-freeze}. To
+compare those detectors, and to decide where to set their trip lines, we need a
+language for ``how good is this verdict?'' that survives contact with a hard clinical
+fact: \textbf{freezes are rare}. A patient walks, stands and shuffles for minutes
+between episodes that each last only seconds, so the no-freeze windows vastly
+outnumber the freeze windows. This section builds that language from the bottom up ---
+the confusion matrix, then the four rates derived from it --- and shows why the
+single number most people reach for, raw accuracy, is the \emph{wrong} headline for
+Cadence.
+
+\begin{intuition}
+Think of Cadence as a smoke alarm for the feet. Two ways to be right (stay quiet when
+the kitchen is calm; sound when there is a fire) and two ways to be wrong (a false
+alarm when you burn toast; silence during a real fire). A smoke alarm graded only on
+``percent of seconds it was correct'' would score brilliantly by simply never going
+off --- because almost every second of every day is fire-free. That is exactly the
+trap a freeze monitor must not fall into.
+\end{intuition}
+
+\subsection{The confusion matrix: four ways a window can be scored}
+
+Fix one detector and one trip line. Run it over a labelled recording and, window by
+window, cross its \emph{prediction} against the \emph{ground truth}. Every window
+lands in exactly one of four cells. We treat \emph{freeze} as the ``positive'' class,
+because catching a freeze is the event we actually care about.
+
+\begin{table}[H]
+\centering
+\caption{The $2\times2$ confusion matrix. Rows are what truly happened; columns are
+what the detector said. The diagonal (TP, TN) is correct; the off-diagonal (FP, FN)
+is the two distinct ways to be wrong --- and for a freeze monitor they cost very
+different amounts.}
+\label{tab:confusion}
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{@{}c c >{\centering\arraybackslash}p{4.9cm} >{\centering\arraybackslash}p{4.9cm}@{}}
+\toprule
+& & \multicolumn{2}{c}{\textbf{Detector says}} \\
+\cmidrule(l){3-4}
+& & \textbf{freeze} (positive) & \textbf{no-freeze} (negative) \\
+\midrule
+\multirow{2}{*}{\rotatebox{90}{\textbf{\;Truth}}}
+& \textbf{freeze}
+& {\color{teal}\textbf{True Positive (TP)}} \par a real freeze, caught
+& {\color{freeze}\textbf{False Negative (FN)}} \par a real freeze, \emph{missed} \\[4pt]
+& \textbf{no-freeze}
+& {\color{amber}\textbf{False Positive (FP)}} \par calm gait, false alarm
+& {\color{teal}\textbf{True Negative (TN)}} \par calm gait, correctly ignored \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{keyidea}
+The two errors are \emph{not} symmetric in their consequences. A \textbf{false
+negative} is a freeze the monitor failed to record --- and an unrecorded freeze is a
+fall risk that the clinician never sees. A \textbf{false positive} is a moment of calm
+gait flagged as a freeze --- annoying, and it muddies the log, but it hurts nobody.
+Cadence is therefore tuned to push FN down even at the cost of a few more FP. This is
+the single design decision behind the deployed freeze-index threshold of $1.815$
+rather than the cleaner Youden optimum of $2.10$.
+\end{keyidea}
+
+\subsection{Four rates, and why accuracy is the wrong one}
+
+From the four counts we build four rates. Each asks a different question of the
+detector; each is just a ratio of cells in Table~\ref{tab:confusion}.
+
+\begin{mathsbox}
+\textbf{Sensitivity} (recall, true-positive rate) --- \emph{of the real freezes, what
+fraction did we catch?}
+\begin{equation}
+\mathrm{sensitivity} = \frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FN}}
+\label{eq:sens}
+\end{equation}
+\textbf{Specificity} (true-negative rate) --- \emph{of the calm-gait windows, what
+fraction did we correctly leave alone?}
+\begin{equation}
+\mathrm{specificity} = \frac{\mathrm{TN}}{\mathrm{TN}+\mathrm{FP}}
+\label{eq:spec}
+\end{equation}
+\textbf{Precision} (positive predictive value) --- \emph{when we shout ``freeze'', how
+often are we right?}
+\begin{equation}
+\mathrm{precision} = \frac{\mathrm{TP}}{\mathrm{TP}+\mathrm{FP}}
+\label{eq:prec}
+\end{equation}
+\textbf{Accuracy} --- \emph{of all windows, what fraction did we get right?}
+\begin{equation}
+\mathrm{accuracy} = \frac{\mathrm{TP}+\mathrm{TN}}{\mathrm{TP}+\mathrm{TN}+\mathrm{FP}+\mathrm{FN}}
+\label{eq:acc}
+\end{equation}
+The crucial structural difference: sensitivity and specificity each look at \emph{one
+row} of the matrix, so neither is diluted by how common the other class is. Accuracy
+pools both rows --- and when one class dominates, it is dragged toward whichever rate
+belongs to the majority.
+\end{mathsbox}
+
+That last sentence is the whole problem. Freezes occupy under a tenth of the windows
+in a typical recording, so the no-freeze row dominates the accuracy sum. A detector
+can score high accuracy while quietly failing at its one job.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.74\linewidth]{accuracy_caveat}
+\caption{The accuracy trap, made concrete. A degenerate ``do-nothing'' detector that
+labels \emph{every} window no-freeze scores $0.90$ accuracy --- it beats our real
+CNN's $0.83$ --- yet its sensitivity is exactly $0.00$: it catches not a single
+freeze. Optimising for accuracy would actively reward the most useless possible
+monitor. This is why Cadence reports sensitivity and specificity, never accuracy
+alone.}
+\label{fig:accuracy_caveat}
+\end{figure}
+
+\begin{takeaway}
+For a rare event, \textbf{accuracy is a vanity metric}. A monitor that never flags a
+freeze scores $\sim$\,$0.90$ accuracy and $0.00$ sensitivity --- useless, but it
+``looks'' right. Cadence is judged on the pair (sensitivity, specificity): freezes
+caught, and calm gait correctly left alone.
+\end{takeaway}
+
+\subsection{The real numbers: FoGNet under leave-one-subject-out}
+
+The headline evaluation for the CNN upgrade uses \emph{leave-one-subject-out} (LOSO)
+cross-validation on the public Daphnet FoG dataset: train on every subject but one,
+test on the held-out subject, rotate through all subjects, then pool every held-out
+window into one confusion matrix. LOSO is deliberately harsh --- the model is always
+scored on a person it has never seen --- which is exactly the situation a new patient
+strapping on the device represents.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.6\linewidth]{confusion_matrix}
+\caption{Pooled LOSO confusion matrix for FoGNet over $n=8982$ held-out windows.
+Counts are TN $=6842$, FP $=1285$, FN $=248$, TP $=607$; the percentages are each
+row normalised to its own total (so the top row reads as specificity, the bottom as
+sensitivity).}
+\label{fig:confusion}
+\end{figure}
+
+Plugging those four counts into
+Equations~\eqref{eq:sens}--\eqref{eq:acc} gives the operating point of the shipped
+CNN.
+
+\begin{table}[H]
+\centering
+\caption{FoGNet pooled-LOSO metrics, computed from the counts in
+Figure~\ref{fig:confusion}. Accuracy ($0.83$) sits \emph{below} the do-nothing
+baseline of Figure~\ref{fig:accuracy_caveat} --- the clearest possible sign that
+accuracy is not the metric to chase here.}
+\label{tab:cnn_metrics}
+\begin{tabular}{@{}l c l@{}}
+\toprule
+Metric & Value & From the counts \\
+\midrule
+Sensitivity & $0.71$ & $607 / (607+248)$ \\
+Specificity & $0.84$ & $6842 / (6842+1285)$ \\
+Accuracy    & $0.83$ & $(607+6842)/8982$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{intuition}
+Read the matrix as a story about one held-out patient cohort. Of every $100$ true
+freeze windows, FoGNet logs about $71$ and lets $29$ slip past. Of every $100$
+calm-gait windows it correctly stays quiet on $84$ and cries wolf on $16$. Neither
+number is perfect --- this is a tiny model on a hard, noisy, real-world signal --- but
+both are far above the chance line, and crucially neither is hidden by the dominance
+of the calm-gait class.
+\end{intuition}
+
+\subsection{Sweeping the trip line: ROC, PR and Youden's J}
+
+Every metric so far assumed a \emph{fixed} threshold. But a detector that emits a
+score --- a freeze probability $\hat p$, or the raw freeze index --- has a whole
+family of operating points: slide the threshold down and you catch more freezes
+(sensitivity up) at the price of more false alarms (specificity down). Two curves
+trace that trade-off across all thresholds at once. We illustrate them on the
+threshold-free RandomForest glass-box, whose continuous score makes the sweep clean.
+
+\begin{figure}[H]
+\centering
+\begin{minipage}[t]{0.49\linewidth}
+\centering
+\includegraphics[width=\linewidth]{roc_curve}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.49\linewidth}
+\centering
+\includegraphics[width=\linewidth]{pr_curve}
+\end{minipage}
+\caption{Two threshold sweeps for the RandomForest glass-box. \textbf{Left:} the ROC
+curve plots sensitivity against the false-alarm rate ($1-\text{specificity}$) as the
+threshold slides; the dashed diagonal is a coin flip. Area under the curve,
+$\text{AUC}=0.82$, summarises ranking quality in one number. \textbf{Right:} the
+precision--recall curve, the honest view under $9.5\%$ freeze prevalence; its average
+precision is only $\text{AP}=0.33$ against a no-skill floor of $0.095$. The gold star
+marks the deployed operating point ($t\approx0.10$, sensitivity $0.75$, specificity
+$0.76$) on both.}
+\label{fig:roc_pr}
+\end{figure}
+
+\begin{keyidea}
+ROC and PR answer different questions, and the gap between $\text{AUC}=0.82$ and
+$\text{AP}=0.33$ is not a contradiction --- it is the rarity of freezes showing up
+twice. \textbf{ROC} asks ``does the score \emph{rank} freezes above calm gait?'' and
+is blind to how many of each there are, so it looks healthy. \textbf{Precision} asks
+``when I shout freeze, am I right?'', and because true freezes are scarce, even a few
+false positives drown the precision. PR is the metric that refuses to flatter a
+rare-event detector.
+\end{keyidea}
+
+Why does the ranking look so much better than the precision? Because the score itself
+\emph{does} separate the classes --- it just cannot do so perfectly. Figure~%
+\ref{fig:score_hist} shows the two score distributions overlaid: calm-gait windows
+pile up near zero, freeze windows are pushed to the right, but the tails overlap.
+\emph{No} single threshold cleanly splits them; every choice trades one error for the
+other.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.78\linewidth]{score_hist}
+\caption{Score separation for the glass-box. Each class is scaled to its own area so
+the rare freeze class is visible. No-freeze windows (grey) cluster at low predicted
+probability; freeze windows (red) spread right. The overlap is exactly the region
+where any threshold must choose between a false positive and a false negative; the
+gold line marks the deployed $t\approx0.10$.}
+\label{fig:score_hist}
+\end{figure}
+
+\paragraph{Choosing the operating point.} Picking a threshold is picking one point on
+the ROC curve. A principled, prevalence-free default is \textbf{Youden's $J$
+statistic}, which rewards the threshold that buys the most sensitivity and specificity
+together:
+\begin{equation}
+J = \mathrm{sensitivity} + \mathrm{specificity} - 1,
+\label{eq:youden}
+\end{equation}
+maximised at the ROC point furthest above the chance diagonal. $J$ ranges from $0$
+(useless) to $1$ (perfect), and it treats a missed freeze and a false alarm as equally
+bad. For the on-board freeze-index rule on the worksheet capture, the $J$-optimal trip
+line is $\FI > 2.10$ --- which on that capture gives perfect specificity ($1.00$) at
+sensitivity $0.83$.
+
+\begin{takeaway}
+Cadence does \emph{not} ship the Youden optimum. Because a missed freeze can mean a
+fall, the board biases toward sensitivity and trips at $\FI > 1.815$ --- buying back a
+missed-freeze margin (sensitivity $0.83$) at the cost of one extra false alarm
+(specificity $0.92$ instead of $1.00$). Youden tells you the balanced point; clinical
+asymmetry tells you to lean past it. The headline is always the pair
+\emph{(sensitivity, specificity)} --- never accuracy.
+\end{takeaway}

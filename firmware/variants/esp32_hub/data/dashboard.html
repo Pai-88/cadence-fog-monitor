@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PD Gait Garment · ESP32 Hub</title>
+<!--
+  Live dashboard for the no-host-PC build. Served from the ESP32's LittleFS by
+  esp32_hub.ino, it opens a WebSocket back to the ESP32 (port 81) and renders:
+    • the band-passed 64 Hz accelerometer trace (from the CPX over UART),
+    • heart rate + SpO2 (from the MAX30102 on the ESP32),
+    • the freeze state — blank until Phase 2, when detection moves to the ESP32.
+-->
+<style>
+  :root {
+    --bg: #08101c; --panel: #111a2c; --panel-2: #182338; --line: #1f2c47;
+    --text: #d8e1ed; --muted: #6e7e96;
+    --ax: #00ff88; --ay: #4cc9ff; --az: #ffaa33;
+    --freeze: #ff5566; --walk: #00ff88; --still: #4aa39a; --cue: #ffd13b;
+    --hr: #ff6b81; --spo2: #4cc9ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); }
+  body { font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+         min-height: 100vh; padding: 14px 18px 18px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 4px 14px; }
+  header h1 { margin: 0; font-size: 17px; font-weight: 500; letter-spacing: 0.4px; }
+  header h1 .accent { color: var(--walk); font-weight: 600; }
+  .conn { font-family: "SF Mono", Menlo, monospace; font-size: 11.5px; color: var(--muted);
+          display: flex; align-items: center; gap: 8px; }
+  .conn .dot { width: 9px; height: 9px; border-radius: 50%; background: #444c5c; }
+  .conn.live .dot { background: var(--walk); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0,255,136,.55);} 70% { box-shadow: 0 0 0 9px rgba(0,255,136,0);} 100% { box-shadow: 0 0 0 0 rgba(0,255,136,0);} }
+
+  .card { background: var(--panel); border-radius: 12px; padding: 12px 16px; margin-bottom: 12px; position: relative; }
+  .card .lbl { font-size: 10.5px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .top-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+  @media (max-width: 720px) { .top-row { grid-template-columns: 1fr; } }
+
+  /* hero gait-state card */
+  .state { border-radius: 12px; padding: 22px 26px; position: relative; overflow: hidden;
+           display: flex; flex-direction: column; justify-content: center; min-height: 190px;
+           background: var(--panel); transition: background .25s; }
+  .state.freeze { background: linear-gradient(135deg, #2a0d12, #3a0f16); }
+  .state.still  { background: linear-gradient(135deg, #0c1a1c, #102528); }
+  .state::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: var(--walk); transition: background .25s; }
+  .state.freeze::before { background: var(--freeze); }
+  .state.still::before  { background: var(--still); }
+  .state .val { font-family: "JetBrains Mono", "SF Mono", Menlo, monospace; font-weight: 700; line-height: 1;
+                color: var(--walk); font-size: clamp(40px, 6vw, 72px); margin: 10px 0 6px; transition: color .25s; }
+  .state.freeze .val { color: var(--freeze); }
+  .state.still  .val { color: var(--still); }
+  .state .fi { font-family: "SF Mono", Menlo, monospace; font-size: 12px; color: var(--muted); }
+  .cue-pill { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; margin-top: 10px;
+              font-family: "SF Mono", Menlo, monospace; font-size: 13px; padding: 7px 13px; border-radius: 999px;
+              background: var(--panel-2); color: var(--muted); }
+  .cue-pill.on { background: rgba(255,209,59,.15); color: var(--cue); }
+  .cue-pill .buzz { width: 10px; height: 10px; border-radius: 50%; background: #444c5c; }
+  .cue-pill.on .buzz { background: var(--cue); animation: buzz .25s linear infinite; }
+  @keyframes buzz { 0%,100% { transform: translateX(-1px);} 50% { transform: translateX(1px);} }
+
+  /* vitals card: HR + SpO2 side by side */
+  .vitals { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: center; min-height: 190px; }
+  .vital { text-align: center; }
+  .vital .num { font-family: "JetBrains Mono", "SF Mono", Menlo, monospace; font-weight: 700; line-height: 1; font-size: clamp(40px, 6vw, 64px); }
+  .vital.hr   .num { color: var(--hr); }
+  .vital.spo2 .num { color: var(--spo2); }
+  .vital .unit { font-size: 15px; color: var(--muted); margin-left: 4px; font-weight: 400; }
+  .vital .cap  { font-size: 10.5px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted); margin-top: 8px; }
+  .vital .searching { font-size: 22px; color: var(--muted); font-family: "SF Mono", Menlo, monospace; }
+  .heart { display: inline-block; }
+  .heart.beat { animation: beat .9s ease-in-out infinite; }
+  @keyframes beat { 0%,100% { transform: scale(1);} 14% { transform: scale(1.18);} 28% { transform: scale(1);} 42% { transform: scale(1.12);} }
+
+  canvas { width: 100%; display: block; }
+  .legend { display: flex; gap: 16px; font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 11px; height: 3px; vertical-align: middle; margin-right: 5px; }
+  .note { color: var(--muted); font-size: 11px; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Parkinson's Gait Garment · <span class="accent">ESP32 Hub</span></h1>
+    <div class="conn" id="conn"><span class="dot"></span><span id="conn-txt">connecting…</span></div>
+  </header>
+
+  <div class="top-row">
+    <!-- gait state — populated in Phase 2 once detection runs on the ESP32 -->
+    <div class="state" id="state">
+      <div class="lbl">Gait state</div>
+      <div class="val" id="state-val">—</div>
+      <div class="fi" id="fi-line">freeze index: —</div>
+      <div class="cue-pill" id="cue"><span class="buzz"></span><span id="cue-txt">cue idle</span></div>
+    </div>
+
+    <!-- vitals from the MAX30102 — live now -->
+    <div class="card vitals">
+      <div class="vital hr">
+        <div><span class="heart" id="heart">♥</span> <span class="num" id="hr-num">—</span><span class="unit">bpm</span></div>
+        <div class="cap">Heart rate</div>
+      </div>
+      <div class="vital spo2">
+        <div><span class="num" id="spo2-num">—</span><span class="unit">%</span></div>
+        <div class="cap">SpO₂</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="lbl">Accelerometer (band-passed, 64 Hz)</div>
+    <canvas id="wave" height="200"></canvas>
+    <div class="legend">
+      <span><i style="background:var(--ax)"></i>x</span>
+      <span><i style="background:var(--ay)"></i>y</span>
+      <span><i style="background:var(--az)"></i>z</span>
+      <span id="stats" style="margin-left:auto"></span>
+    </div>
+    <div class="note" id="hint">Place a fingertip gently on the MAX30102 and keep it still for a few seconds for HR/SpO₂ to lock.</div>
+  </div>
+
+<script>
+const WAVE_LEN = 64 * 8;                 // 8 s of accel on screen
+const accel = [[], [], []];
+let   samples = 0;
+
+function pushCap(arr, v, cap) { arr.push(v); if (arr.length > cap) arr.splice(0, arr.length - cap); }
+
+function fitCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); return [ctx, w, h];
+}
+
+function drawWave() {
+  const cv = document.getElementById('wave');
+  const [ctx, w, h] = fitCanvas(cv);
+  ctx.clearRect(0, 0, w, h);
+  const cols = ['--ax', '--ay', '--az'].map(v => getComputedStyle(document.documentElement).getPropertyValue(v));
+  let max = 1;
+  for (const ch of accel) for (const v of ch) max = Math.max(max, Math.abs(v));
+  const mid = h / 2, scale = (h * 0.46) / max;
+  ctx.lineWidth = 1.4;
+  for (let c = 0; c < 3; c++) {
+    const data = accel[c]; if (!data.length) continue;
+    ctx.beginPath(); ctx.strokeStyle = cols[c];
+    for (let i = 0; i < data.length; i++) {
+      const x = (i / (WAVE_LEN - 1)) * w, y = mid - data[i] * scale;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+  }
+}
+function render() { drawWave(); requestAnimationFrame(render); }
+requestAnimationFrame(render);
+
+// ── WebSocket back to the ESP32 (HTTP is on :80, the WS server is on :81) ──
+function connect() {
+  const ws = new WebSocket(`ws://${location.hostname}:81/`);
+  const conn = document.getElementById('conn'), txt = document.getElementById('conn-txt');
+  ws.onopen  = () => { conn.classList.add('live'); txt.textContent = 'live'; };
+  ws.onclose = () => { conn.classList.remove('live'); txt.textContent = 'reconnecting…'; setTimeout(connect, 1200); };
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === 'waveform') {
+      for (const s of m.accel) { for (let c = 0; c < 3; c++) pushCap(accel[c], s[c], WAVE_LEN); samples++; }
+      document.getElementById('stats').textContent = `${samples.toLocaleString()} samples @ 64 Hz`;
+    } else if (m.type === 'vitals') {
+      // heart rate
+      const hr = document.getElementById('hr-num'), heart = document.getElementById('heart');
+      hr.textContent = m.hr_valid ? m.hr : '—';
+      hr.classList.toggle('searching', !m.hr_valid);
+      heart.classList.toggle('beat', !!m.hr_valid);
+      // SpO2
+      const sp = document.getElementById('spo2-num');
+      sp.textContent = m.spo2_valid ? m.spo2 : '—';
+      sp.classList.toggle('searching', !m.spo2_valid);
+      // gait state (only meaningful once the ESP32 runs detection — Phase 2)
+      const stateEl = document.getElementById('state'), valEl = document.getElementById('state-val');
+      const state = m.has_state ? m.state : '—';
+      stateEl.classList.toggle('freeze', state === 'FREEZE');
+      stateEl.classList.toggle('still',  state === 'STILL');
+      valEl.textContent = state;
+      document.getElementById('fi-line').textContent =
+        'freeze index: ' + (m.has_state ? m.freeze_index.toFixed(2) : '—');
+    }
+  };
+}
+connect();
+</script>
+</body>
+</html>

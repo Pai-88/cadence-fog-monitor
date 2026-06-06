@@ -1,0 +1,72 @@
+\documentclass[12pt]{article}
+\usepackage[a4paper,margin=2.3cm]{geometry}
+\usepackage{xcolor}
+\usepackage{parskip}
+\usepackage{microtype}
+
+\definecolor{navy}{HTML}{1B2A4A}
+\definecolor{brick}{HTML}{C0392B}
+\definecolor{muted}{HTML}{6B7280}
+\definecolor{tint}{HTML}{EEF3FB}
+
+% slide-cue header: #1 = slide name, #2 = running time
+\newcommand{\cue}[2]{%
+  \par\medskip
+  {\color{navy}\rule{\linewidth}{0.6pt}}\par\vspace{1pt}%
+  \noindent{\sffamily\bfseries\color{navy}\large SLIDE \textbullet\ #1}%
+  \hfill{\sffamily\small\color{muted} #2}\par\smallskip}
+% stage direction (not spoken)
+\newcommand{\sd}[1]{{\color{muted}\itshape (#1)}\ }
+% emphasis word to stress aloud
+\newcommand{\key}[1]{\textbf{#1}}
+
+\pagestyle{empty}
+\linespread{1.2}
+
+\begin{document}
+
+% ---------- Title block ----------
+{\sffamily
+ {\color{navy}\Huge\bfseries Cadence}\\[3pt]
+ {\color{brick}\large\bfseries Software segment --- presentation script}\\[5pt]
+ {\color{muted}\normalsize 4-speaker group talk \textbullet\ your part \textbullet\ target $\approx$ 3 minutes}\par}
+\vspace{5pt}
+{\color{navy}\rule{\linewidth}{1.2pt}}
+
+% ---------- Reminders strip ----------
+\vspace{7pt}
+\noindent\colorbox{tint}{%
+\begin{minipage}{\dimexpr\linewidth-2\fboxsep}
+\sffamily\small\color{navy}\setlength{\parskip}{2pt}
+\textbf{Before you start}\\
+$\bullet$\ Let \emph{Hardware} hand you ``a stream of samples'' --- \emph{you} own the Freeze Index, gate \& debounce.\\
+$\bullet$\ Frame your pipeline as the \emph{hand-built, rule-based} detector (it sets up the ML handoff).\\
+$\bullet$\ Running long? The ``Host tooling'' slide is the safe cut. \quad Bold words = stress them.
+\end{minipage}}
+\vspace{4pt}
+
+% ---------- Script ----------
+{\large\raggedright
+
+\cue{from raw motion to a live decision}{0:00}
+Thanks. So \textsf{[Speaker~2]} hands the software a stream of accelerometer samples at \key{64 hertz}. My job is everything that turns that raw stream into a freeze decision you can \key{trust} --- both on the device in real time, and on the host afterwards.
+
+\cue{on-device pipeline}{0:25}
+Here's what runs on the board itself. Every 2 seconds, I take the last 4-second window --- 256 samples --- and run a short \key{FFT} over it. I sum the power in the freeze band, 3 to 8 hertz, and the power in the walking band, half to 3 hertz, and divide them --- that ratio is the \key{Freeze Index}.
+
+But --- and this is the important part --- a high index on its own is \emph{not} a freeze. The decision logic only says \emph{freeze} when \key{two conditions} are met: there's enough overall movement energy to clear the \key{gate}, \emph{and} the index is over \key{threshold}. Then a \key{two-window debounce} state machine requires that to hold for two readings in a row before it flips the state, on or off. That single piece of logic is what kills the one-off false alarms. The result drives the on-board display live --- and yes, the cue path exists in the code, but it's \key{disabled in firmware} by design.
+
+And all of that --- an FFT and a decision, twice a second --- runs in lightweight integer math on a tiny low-power microcontroller. No phone, no cloud.
+
+\cue{host tooling \& data pipeline}{1:40}
+Off the device, the software does two more jobs. The firmware tags \key{every sample with an auto-incrementing phase label} and logs it to flash; we replay it over USB straight into a CSV, so we get \key{ground truth for free}. And a Python pipeline windows that data, builds the confusion matrices and the threshold sweep --- that's what let us tune the threshold \key{honestly}, not by eye. The same decision stream also feeds a \key{live web dashboard} --- which I'll show you right now.
+
+\cue{live demo}{2:10}
+\sd{start the dashboard replay} This is a real capture playing back. Watch the Freeze Index trace against the operating line. Through normal walking it stays \key{under the line} --- silent. And here, the genuine freeze --- it jumps above, the state flips to \textcolor{brick}{\textbf{FREEZE}}, the dashboard lights up. Quiet on the walk, clean catch on the freeze --- that's the gate and the debounce, in software, doing exactly their job.
+
+\cue{close}{2:50}
+So the whole pipeline is deliberately \key{transparent} --- rule-based, traceable, every decision explainable. That's the philosophy behind Cadence: \emph{a glass-box monitor a clinician can trust beats a black box that just buzzes.} Thank you --- happy to take questions.
+
+}% end large
+
+\end{document}

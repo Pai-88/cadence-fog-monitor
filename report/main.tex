@@ -1,0 +1,107 @@
+% ============================================================================
+%  Cadence — Technical Report (master file)
+%  Build:  cd report && tectonic main.tex
+%  Sections are written by the drafting workflow into sections/.
+% ============================================================================
+\input{preamble.tex}
+
+\begin{document}
+
+% ----------------------------------------------------------------- cover -----
+\begin{titlepage}
+\thispagestyle{empty}
+\centering
+\vspace*{1.6cm}
+
+{\color{navy}\rule{\linewidth}{2.4pt}}\\[0.5cm]
+{\fontsize{52}{56}\selectfont\bfseries\color{navy} Cadence}\\[0.35cm]
+{\LARGE\color{steel} A Wearable Freeze-of-Gait Monitor\\[2pt] for Parkinson's Disease}\\[0.5cm]
+{\color{navy}\rule{\linewidth}{2.4pt}}\\[0.9cm]
+
+{\Large\color{ink} Technical Report \;\textbullet\; How It Works, End to End}\\[1.4cm]
+
+% --- a small conceptual gait-strip motif (centred, symmetric bbox) ---
+\begin{tikzpicture}[scale=1.0]
+  \def\h{0.6}
+  \fill[paleteal]   (0,0)   rectangle (3,\h);
+  \fill[palenavy]   (3,0)   rectangle (6.4,\h);
+  \fill[palefreeze] (6.4,0) rectangle (8.6,\h);
+  \fill[palenavy]   (8.6,0) rectangle (12,\h);
+  \draw[rule,line width=0.4pt] (0,0) rectangle (12,\h);
+  \node[font=\small\bfseries,teal]   at (1.5,\h/2)  {STILL};
+  \node[font=\small\bfseries,steel]  at (4.7,\h/2)  {WALK};
+  \node[font=\small\bfseries,freeze] at (7.5,\h/2)  {FREEZE};
+  \node[font=\small\bfseries,steel]  at (10.3,\h/2) {WALK};
+  \draw[mute,-{Latex[length=2mm]}] (0,-0.3) -- (12,-0.3);
+  \node[font=\footnotesize,mute] at (6,-0.62) {time};
+\end{tikzpicture}\\[1.4cm]
+
+\vspace{1.0cm}
+{\large\color{ink}\bfseries ENGF0031 Scenario 2 \;\textbullet\; ``Smart Clothing''}\\[0.5cm]
+\begin{minipage}{0.82\linewidth}
+\centering\small\color{mute}
+Every quantitative result in this report is \textbf{real} --- computed from on-body
+captures, the public Daphnet benchmark, and the project's own analysis code.
+The device is a \textbf{monitor}: it detects and displays freezes; the fitted
+vibration motor is disabled in firmware.
+\end{minipage}\\[1.2cm]
+\end{titlepage}
+
+% --------------------------------------------------------------- contents ----
+\clearpage
+{\color{navy}\hrule height 0.4pt}
+\vspace{0.3cm}
+\tableofcontents
+\vspace{0.3cm}
+{\color{navy}\hrule height 0.4pt}
+\clearpage
+
+% ---------------------------------------------------------------- body -------
+\input{sections/01_aim.tex}
+
+\bigskip
+\input{sections/02_overview.tex}
+
+\bigskip
+\input{sections/03_sensing.tex}
+
+\bigskip
+\input{sections/04_magnitude.tex}
+
+\bigskip
+\input{sections/05_fourier.tex}
+
+\bigskip
+\input{sections/06_freeze_index.tex}
+
+\bigskip
+\input{sections/07_windowing.tex}
+
+\bigskip
+\input{sections/08_detector.tex}
+
+\bigskip
+\input{sections/09_cnn.tex}
+
+\bigskip
+\input{sections/10_training.tex}
+
+\bigskip
+\input{sections/11_metrics.tex}
+
+\bigskip
+\input{sections/12_interpretability.tex}
+
+\bigskip
+\input{sections/13_hardware.tex}
+
+\bigskip
+\input{sections/14_software.tex}
+
+\bigskip
+\input{sections/15_dashboard.tex}
+
+\bigskip
+\input{sections/16_results_future.tex}
+
+\end{document}

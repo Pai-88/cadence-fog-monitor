@@ -1,0 +1,333 @@
+\section{Fourier Analysis: From Time to Frequency}
+\label{sec:fourier}
+
+The accelerometer hands us a wiggling line: the magnitude \(a[n]\) sampled
+\SI{64}{\hertz}, one number every \(\approx\SI{15.6}{\milli\second}\). Looking at
+that line, a calm stroll and a freeze episode are both ``a wobble around \(1\,g\)''
+--- the eye cannot reliably separate them. The whole trick of Cadence is to stop
+asking \emph{how big} the wobble is and start asking \emph{how fast} it wobbles.
+Walking paces the leg at roughly \(1\text{--}2\) steps per second; a freeze sets the
+foot trembling in place at a much faster \(3\text{--}8\) times per second. Those two
+\emph{rhythms} live in different places on the frequency axis even when their
+amplitudes overlap. Fourier analysis is the lens that turns a tangle of time-domain
+wiggles into a clean picture of which rhythms are present and how strong each one is.
+
+\begin{intuition}
+A chord on a piano is a single complicated pressure wave hitting your ear, yet you
+hear three distinct notes. Your ear is doing Fourier analysis: it decomposes one
+messy waveform into the pure tones that add up to it. Cadence does the same to the
+ankle signal --- it listens for the ``note'' of a freeze (a \(3\text{--}8\,\)Hz
+buzz) hiding underneath the ``note'' of walking (a \(1\text{--}2\,\)Hz sway).
+\end{intuition}
+
+\subsection{Any signal is a sum of sinusoids}
+
+The founding idea, due to Joseph Fourier, is that \emph{any} reasonable signal --- no
+matter how jagged --- can be rebuilt by adding together pure sine and cosine waves of
+different frequencies, each with its own amplitude and phase. A slow sine captures the
+broad sway; faster sines fill in the finer trembles. Add enough of them and you
+reproduce the original wiggle exactly. The two questions ``what does the signal look
+like in time?'' and ``which sinusoids is it made of?'' are two descriptions of the
+\emph{same} object --- the second is just the more useful one for telling walking
+apart from freezing.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}
+% ----- LEFT: time-domain signal = sum of two sinusoids -----
+\begin{axis}[
+  name=time,
+  width=8.8cm,height=5.4cm,
+  xlabel={time \(t\) (s)}, ylabel={\(a(t)\) (mg, DC removed)},
+  axis lines=left, xmin=0,xmax=4, ymin=-2.6,ymax=2.6,
+  xtick={0,1,2,3,4}, ytick=\empty,
+  every axis label/.append style={font=\small},
+  tick label style={font=\footnotesize},
+  title={\small\bfseries\color{ink} Time domain: one tangled wiggle},
+]
+% slow walking component
+\addplot[steel,thick,dashed,domain=0:4,samples=300]{1.5*sin(deg(2*pi*1.5*x))};
+% fast freeze component
+\addplot[freeze,thick,dashdotted,domain=0:4,samples=400]{0.8*sin(deg(2*pi*5*x))};
+% their sum
+\addplot[navy,very thick,domain=0:4,samples=600]
+  {1.5*sin(deg(2*pi*1.5*x)) + 0.8*sin(deg(2*pi*5*x))};
+\end{axis}
+\node[steel,font=\scriptsize] at (time.north west) [xshift=18mm,yshift=-3mm] {slow sway};
+\node[freeze,font=\scriptsize] at (time.north west) [xshift=18mm,yshift=-8mm] {fast tremble};
+% ----- arrow -----
+\node[right=2mm of time.east,font=\Large\bfseries,navy] (ft) {\(\xrightarrow{\;\text{DFT}\;}\)};
+% ----- RIGHT: frequency-domain spectrum, two peaks -----
+\begin{axis}[
+  at={($(time.east)+(2.7cm,0)$)}, anchor=west,
+  width=8.8cm,height=5.4cm,
+  xlabel={frequency \(f\) (Hz)}, ylabel={power \(|X(f)|^2\)},
+  axis lines=left, xmin=0,xmax=10, ymin=0,ymax=1.15,
+  xtick={0,1.5,3,5,8,10}, ytick=\empty,
+  every axis label/.append style={font=\small},
+  tick label style={font=\footnotesize},
+  title={\small\bfseries\color{ink} Frequency domain: two clean peaks},
+]
+% locomotor band shading
+\addplot[draw=none,fill=palenavy] coordinates {(0.5,0)(0.5,1.15)(3,1.15)(3,0)}\closedcycle;
+% freeze band shading
+\addplot[draw=none,fill=palefreeze] coordinates {(3,0)(3,1.15)(8,1.15)(8,0)}\closedcycle;
+% walking peak at 1.5 Hz
+\addplot[steel,very thick,domain=0:10,samples=400]{1.0*exp(-((x-1.5)^2)/0.05)};
+% freeze peak at 5 Hz
+\addplot[freeze,very thick,domain=0:10,samples=400]{0.45*exp(-((x-5)^2)/0.05)};
+\node[steel,font=\scriptsize,align=center] at (axis cs:1.5,1.06) {walking\\\(1.5\,\)Hz};
+\node[freeze,font=\scriptsize,align=center] at (axis cs:5,0.62) {freeze\\\(5\,\)Hz};
+\node[navy,font=\scriptsize] at (axis cs:1.75,0.16) {loco band};
+\node[freeze!70!black,font=\scriptsize] at (axis cs:5.5,0.16) {freeze band};
+\end{axis}
+\end{tikzpicture}}
+\caption{The same signal, two views. \textbf{Left:} a slow \(1.5\,\)Hz sway
+(steel, dashed) plus a faster \(5\,\)Hz tremble (red, dash-dotted) add to one tangled
+trace (navy) --- hard to read by eye. \textbf{Right:} the Discrete Fourier Transform
+unfolds that trace into a spectrum where each rhythm becomes a sharp peak at its own
+frequency. Walking energy lands in the locomotor band (\(0.5\text{--}3\,\)Hz, navy
+shading); freeze energy lands in the freeze band (\(3\text{--}8\,\)Hz, red shading).
+Separating the two by \emph{rhythm} is what makes them distinguishable.}
+\label{fig:time-to-freq}
+\end{figure}
+
+\subsection{The Discrete Fourier Transform and its bins}
+
+We never have a continuous signal; we have \(N\) evenly spaced samples. The
+\textbf{Discrete Fourier Transform} (DFT) is the finite-data version of Fourier's
+idea. It takes a block of \(N\) samples and returns \(N\) complex numbers
+\(X[k]\), each measuring how much of the \(k\)-th sinusoid the block contains.
+
+\begin{mathsbox}
+For a window of \(N\) samples \(a[0],\dots,a[N-1]\), the DFT coefficients are
+\begin{equation}
+X[k] \;=\; \sum_{n=0}^{N-1} a[n]\, e^{-\mathrm{j}\,2\pi kn/N},
+\qquad k = 0,1,\dots,N-1 .
+\label{eq:dft}
+\end{equation}
+The term \(e^{-\mathrm{j}2\pi kn/N}\) is a pure spinning sinusoid at frequency index
+\(k\); the sum measures how strongly the data ``rings'' at that frequency.
+Coefficient \(X[k]\) maps to a physical frequency
+\begin{equation}
+f_k \;=\; k\cdot\frac{f_s}{N}\,, \qquad k=0,1,\dots,\tfrac{N}{2}.
+\label{eq:fk}
+\end{equation}
+The Fast Fourier Transform (FFT) is simply a clever \(\mathcal{O}(N\log N)\)
+algorithm that computes the \emph{same} \(X[k]\) far faster than the naive
+\(\mathcal{O}(N^2)\) sum --- the answer is identical.
+\end{mathsbox}
+
+The spectrum is not continuous: it is sampled at discrete frequencies \(f_k\) called
+\textbf{bins}. The spacing between neighbouring bins is the single most important
+number in this section:
+\begin{equation}
+\Delta f \;=\; \frac{f_s}{N} \;=\; \frac{64\ \text{Hz}}{256} \;=\; 0.25\ \text{Hz}.
+\label{eq:binspacing}
+\end{equation}
+With \(f_s=\SI{64}{\hertz}\) and a window of \(N=256\) samples (\(=\SI{4.0}{\second}\)),
+Cadence resolves the spectrum in steps of \(\SI{0.25}{\hertz}\) from \(0\) up to the
+Nyquist limit \(f_s/2=\SI{32}{\hertz}\). That Nyquist ceiling comfortably covers every
+band we care about (the highest is the \(8\,\)Hz top of the freeze band), so nothing of
+interest is aliased.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=14.2cm,height=4.7cm,
+  ybar interval=0.85,
+  xlabel={frequency \(f\) (Hz) --- one bar per DFT bin, \(\Delta f=0.25\,\)Hz},
+  ylabel={band power},
+  axis lines=left, xmin=0,xmax=9, ymin=0,ymax=1.28,
+  xtick={0,0.5,1,1.5,2,2.5,3,4,5,6,7,8},
+  xticklabel style={font=\scriptsize}, ytick=\empty,
+  every axis label/.append style={font=\small},
+]
+% draw bins as a coarse histogram approximating two band humps
+\addplot[draw=steel,fill=palenavy,thick] coordinates {
+ (0.5,0.10)(0.75,0.18)(1.0,0.34)(1.25,0.62)(1.5,0.92)(1.75,0.74)(2.0,0.46)
+ (2.25,0.26)(2.5,0.15)(2.75,0.09)};
+\addplot[draw=freeze,fill=palefreeze,thick] coordinates {
+ (3.0,0.06)(3.25,0.10)(3.5,0.16)(3.75,0.22)(4.0,0.30)(4.25,0.40)(4.5,0.52)
+ (4.75,0.58)(5.0,0.56)(5.25,0.44)(5.5,0.30)(5.75,0.20)(6.0,0.13)(6.25,0.09)
+ (6.5,0.07)(6.75,0.06)(7.0,0.05)(7.25,0.045)(7.5,0.04)(7.75,0.04)};
+% band boundary markers
+\draw[densely dashed,navy] (axis cs:0.5,0) -- (axis cs:0.5,1.0);
+\draw[densely dashed,navy] (axis cs:3,0) -- (axis cs:3,1.0);
+\draw[densely dashed,freeze] (axis cs:8,0) -- (axis cs:8,1.0);
+\node[navy,font=\scriptsize] at (axis cs:1.75,1.17) {locomotor band \(0.5\text{--}3\,\)Hz};
+\node[freeze!75!black,font=\scriptsize] at (axis cs:5.6,1.17) {freeze band \(3\text{--}8\,\)Hz};
+\end{axis}
+\end{tikzpicture}
+\caption{Each bar is one DFT bin, \(\SI{0.25}{\hertz}\) wide. \textbf{Band power} is
+nothing more than the sum of the bins falling inside a band: the locomotor band
+(\(0.5\text{--}3\,\)Hz, \(\approx 10\) bins) and the freeze band (\(3\text{--}8\,\)Hz,
+\(\approx 20\) bins). The \(\SI{4}{\second}\) window is chosen precisely so these bins
+are fine enough to separate the locomotor and freeze humps cleanly.}
+\label{fig:bins}
+\end{figure}
+
+\begin{keyidea}
+\textbf{Resolution costs time.} The bin spacing \(\Delta f = f_s/N\) shrinks as the
+window grows. To resolve the \(3\text{--}8\,\)Hz freeze hump we need fine bins, so we
+use a long \(N=256\) (\(\SI{4}{\second}\)) window: \(\SI{0.25}{\hertz}\) bins put
+\(\sim\!20\) samples across the freeze band. A short window would give coarse, blurry
+bins that smear walking and freezing together. The price is temporal: a \(4\,\)s window
+cannot localise an event to better than a few seconds --- which is fine, because a
+freeze \emph{lasts} seconds.
+\end{keyidea}
+
+\subsection{Power, leakage, and the Hann window}
+
+We rarely care about the phase of each sinusoid, only how much \emph{energy} sits at
+each frequency. That is the \textbf{power spectrum}, \(|X[k]|^2\): square the magnitude
+of each coefficient. Squaring also makes the quantity additive in a way the next
+section relies on. Parseval's theorem guarantees the bookkeeping is honest:
+\begin{equation}
+\sum_{n=0}^{N-1} a[n]^2 \;=\; \frac{1}{N}\sum_{k=0}^{N-1} \bigl|X[k]\bigr|^2 .
+\label{eq:parseval}
+\end{equation}
+
+\begin{mathsbox}
+Parseval says the total energy is the same whether you measure it in time
+(left, sum of squared samples) or in frequency (right, sum of squared spectrum). No
+energy is created or destroyed by changing viewpoint. This is why ``band power = sum
+of \(|X[k]|^2\) over a band'' is a meaningful slice of the signal's real energy, and
+why adding the locomotor and freeze band powers gives the leg's total movement energy
+(used later by the still-floor gate).
+\end{mathsbox}
+
+There is a catch. The DFT secretly assumes the \(N\)-sample window repeats forever. A
+real \(4\,\)s slice almost never starts and ends at the same value, so the assumed
+loop has a discontinuity at the seam --- a sudden jump that the DFT explains by
+sprinkling spurious energy across many bins. This smearing is called \textbf{spectral
+leakage}, and it can wash freeze-band energy into the locomotor band (and vice versa),
+exactly the contamination we must avoid.
+
+The fix is a \textbf{window function} that gently tapers the slice to zero at both
+ends before transforming, removing the seam. Cadence uses the \textbf{Hann window}:
+\begin{equation}
+w[n] \;=\; 0.5\Bigl(1-\cos\tfrac{2\pi n}{N-1}\Bigr),
+\qquad n=0,1,\dots,N-1 .
+\label{eq:hann}
+\end{equation}
+It rises smoothly from \(0\), peaks at the centre, and returns to \(0\) --- so however
+the slice was cut, the windowed version always starts and ends flush.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}
+% ----- LEFT: Hann window shape -----
+\begin{axis}[
+  name=hann,
+  width=8.4cm,height=5.0cm,
+  xlabel={sample index \(n\)}, ylabel={weight \(w[n]\)},
+  axis lines=left, xmin=0,xmax=256, ymin=0,ymax=1.08,
+  xtick={0,64,128,192,256}, ytick={0,0.5,1},
+  tick label style={font=\footnotesize},
+  every axis label/.append style={font=\small},
+  title={\small\bfseries\color{ink} Hann window (\(N=256\))},
+]
+\addplot[teal,very thick,domain=0:256,samples=300]
+  {0.5*(1-cos(deg(2*pi*x/255)))};
+\addplot[draw=none,fill=paleteal,domain=0:256,samples=120]
+  {0.5*(1-cos(deg(2*pi*x/255)))}\closedcycle;
+\node[teal!60!black,font=\scriptsize,align=center] at (axis cs:128,0.45) {taper\\to zero\\at both\\ends};
+\end{axis}
+% ----- RIGHT: effect on the seam -----
+\begin{axis}[
+  at={($(hann.east)+(1.8cm,0)$)}, anchor=west,
+  width=8.4cm,height=5.0cm,
+  xlabel={sample index \(n\)}, ylabel={signal},
+  axis lines=left, xmin=0,xmax=256, ymin=-1.25,ymax=1.25,
+  xtick={0,128,256}, ytick=\empty,
+  tick label style={font=\footnotesize},
+  every axis label/.append style={font=\small},
+  title={\small\bfseries\color{ink} Raw vs.\ windowed slice},
+]
+% raw signal: does not return to its start -> seam jump
+\addplot[mute,thick,dashed,domain=0:256,samples=300]
+  {sin(deg(2*pi*4.3*x/256))};
+% windowed signal: tapered to zero at both ends
+\addplot[navy,very thick,domain=0:256,samples=400]
+  {0.5*(1-cos(deg(2*pi*x/255)))*sin(deg(2*pi*4.3*x/256))};
+\node[mute,font=\scriptsize] at (axis cs:120,1.14) {raw (seam jump)};
+\node[navy,font=\scriptsize,anchor=west] at (axis cs:14,-0.78) {Hann-tapered};
+\end{axis}
+\end{tikzpicture}}
+\caption{\textbf{Left:} the Hann taper --- a raised cosine that weights the centre of
+the window fully and fades the edges to zero. \textbf{Right:} multiplying the raw
+slice (grey, dashed --- note it does \emph{not} return to its starting value, creating
+a discontinuity when the DFT loops it) by the Hann window gives the tapered slice
+(navy), which starts and ends flush at zero. The seam vanishes, and with it most of
+the spectral leakage.}
+\label{fig:hann}
+\end{figure}
+
+\subsection{Welch's method: a steadier spectrum}
+
+A single \(4\,\)s DFT is noisy --- its bin heights jitter from one window to the next.
+Cadence uses \textbf{Welch's method} to get a steadier estimate of the power spectral
+density (PSD). The recipe is short:
+\begin{enumerate}
+\item Subtract the window mean from \(a[n]\) (kills the gravity/DC term so it does not
+      dominate bin \(0\)).
+\item Apply the Hann taper of Eq.~\eqref{eq:hann} (cuts leakage).
+\item Take the FFT and form \(|X[k]|^2\) (the power at each bin).
+\item Average these periodograms across overlapping windows (smooths the jitter).
+\end{enumerate}
+The result is the PSD: a stable estimate of power-per-frequency, normalised so that
+summing it over a band yields that band's power. In code the whole chain is a few
+lines built on the \code{fog.dsp} primitives:
+
+\begin{lstlisting}[style=py,caption={The Welch PSD chain, then a band-power slice (from \code{fog.dsp}).}]
+def welch_psd(window, fs=64, nfft=256):
+    x = window - window.mean()          # 1. remove gravity / DC
+    x = x * np.hanning(len(x))          # 2. Hann taper -> less leakage
+    X = np.fft.rfft(x, n=nfft)          # 3. FFT (one-sided, real input)
+    return (np.abs(X) ** 2) / fs        # power spectral density, |X|^2
+
+def band_power(psd, fs, nfft, f_lo, f_hi):
+    df  = fs / nfft                     # 0.25 Hz bin spacing
+    lo  = int(np.ceil (f_lo / df))      # first bin in band
+    hi  = int(np.floor(f_hi / df))      # last  bin in band
+    return psd[lo:hi + 1].sum()         # band power = sum of bins
+\end{lstlisting}
+
+\begin{intuition}
+Welch's method is the audio equivalent of letting a tuner ``settle'': instead of
+trusting one fleeting snapshot, it averages several overlapping looks at the same few
+seconds so random noise cancels out while the genuine walking and freeze tones stand
+firm. The \(\SI{0.25}{\hertz}\) bins then read like a labelled ruler --- you can point
+straight at the \(0.5\text{--}3\,\)Hz and \(3\text{--}8\,\)Hz stretches and add up
+what is there.
+\end{intuition}
+
+Figure~\ref{fig:capture1-spectral} shows the payoff on real data. The
+\code{capture1.csv} worksheet capture runs through four phases; in the freeze phase
+the magnitude trace erupts into a fast, dense tremble, and the Freeze Index --- a
+ratio of two band powers we have just learned to compute --- jumps from its calm
+baseline of \(\approx 1\) to a peak of \(21.35\).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\linewidth]{capture1_trace}
+\caption{Real worksheet capture (\code{capture1.csv}, \SI{64}{\hertz},
+\SI{41.4}{\second}). \textbf{Top:} the ankle magnitude \(\norm{a}\) in mg across four
+phases. The calm phases are a quiet wobble near \(1\,g\); the freeze phase (phase~2)
+explodes into a fast, high-amplitude tremble. \textbf{Bottom:} the Freeze Index
+computed per window from the band powers defined here --- still \(\approx 1.1\), walk
+\(\approx 1.2\), then a freeze peak of \(21.35\). The fast tremble is invisible as
+``size'' alone but obvious once we read it in the frequency domain.}
+\label{fig:capture1-spectral}
+\end{figure}
+
+\begin{takeaway}
+Stop measuring \emph{how big} the ankle wobbles and measure \emph{how fast}: the DFT
+turns a \(\SI{4}{\second}\) window into \(\SI{0.25}{\hertz}\) bins, the Hann-tapered
+Welch PSD makes those bins trustworthy, and walking (\(0.5\text{--}3\,\)Hz) lands
+elsewhere than freezing (\(3\text{--}8\,\)Hz) --- the foundation of the Freeze Index.
+\end{takeaway}

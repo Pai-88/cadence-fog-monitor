@@ -1,0 +1,382 @@
+\section{The Live Dashboard: What Every Metric Means}
+\label{sec:dashboard}
+
+Everything in this report --- the magnitude trick, the Welch spectrum, the Freeze
+Index, the still-floor gate, the debounce --- exists to drive \emph{one screen}. When
+Cadence is on an ankle and the wearer takes a few steps, a clinician (or the wearer
+themselves) looks at a single web page and should be able to say, at a glance,
+``\emph{the leg is walking calmly},'' ``\emph{the leg is shuffling in place --- that is a
+freeze},'' or ``\emph{the leg is at rest}.'' This section is a reading guide for that
+screen. It walks panel by panel, says in plain words what each number means, gives the
+\emph{typical} values you see when the leg is still, walking, and freezing, and --- most
+importantly --- makes the arithmetic that links the panels explicit, so the dashboard
+reads as one coherent story rather than seven disconnected dials.
+
+\begin{keyidea}
+The dashboard is a \textbf{glass box}, not a black box. Every panel is a quantity you
+can compute by hand from the raw trace, and the headline verdict is built from them by a
+rule you can recite: \emph{the gate decides if the leg is moving at all; the Freeze
+Index decides whether that movement is a freeze; the debounce makes sure the verdict is
+not a one-off twitch}. Nothing on the screen is a learned weight you cannot inspect.
+\end{keyidea}
+
+\subsection{The screen at a glance}
+
+Figure~\ref{fig:dash-mock} is an annotated mock of the live page. There are seven
+panels. One of them --- \emph{Gait Status} --- is the answer; the other six are the
+\emph{evidence} that produced it. The trick to reading the dashboard quickly is to know
+which panels are inputs and which is the output, and how the inputs flow into the
+output. That flow is always the same three steps, drawn as the spine of the mock:
+\[
+\underbrace{\textsf{Movement Energy}}_{\text{is the leg moving?}}
+\;\longrightarrow\;
+\underbrace{\textsf{Freeze Index}}_{\text{is it a freeze?}}
+\;\longrightarrow\;
+\underbrace{\textsf{Debounce}}_{\text{is it stable?}}
+\;\longrightarrow\;
+\textsf{Gait Status}.
+\]
+
+\begin{figure}[htbp]
+\centering
+\resizebox{0.97\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\sffamily,
+  panel/.style={draw=rule,line width=0.8pt,rounded corners=3pt,fill=mist,
+                minimum width=4.6cm,minimum height=2.05cm,align=center,inner sep=5pt},
+  hdr/.style={font=\footnotesize\bfseries,text=navy},
+  sub/.style={font=\scriptsize,text=mute},
+  big/.style={font=\Large\bfseries},
+  call/.style={font=\footnotesize\itshape,text=ink,align=left},
+  arr/.style={-{Stealth[length=2.2mm]},line width=0.9pt,color=steel},
+  flow/.style={-{Stealth[length=3mm]},line width=1.6pt,color=navy},
+]
+
+% ---------- headline verdict (top, spanning) ----------
+\node[panel,fill=palefreeze,draw=freeze,line width=1.2pt,
+      minimum width=15.4cm,minimum height=1.9cm] (status) at (0,0) {};
+\node[hdr,anchor=north west] at ([xshift=6pt,yshift=-5pt]status.north west) {GAIT STATUS};
+\node[big,text=freeze,anchor=west] (verdictword) at ([xshift=-6.6cm,yshift=-2pt]status.center) {FREEZE};
+\node[circle,fill=freeze,minimum size=11pt,inner sep=0pt]
+  at ([xshift=0.55cm]verdictword.east){};
+% thin divider
+\draw[rule,line width=0.7pt] ([xshift=-1.9cm,yshift=12pt]status.center) -- ([xshift=-1.9cm,yshift=-12pt]status.center);
+\node[sub,align=left,anchor=west] at ([xshift=-1.6cm,yshift=-2pt]status.center)
+  {\textbf{STILL} \;\textbullet\; \textbf{WALKING} \;\textbullet\; \textbf{FREEZE}\\[2pt]
+   the one headline verdict\\[1pt] gate $\to$ FI $\to$ debounce};
+
+% ---------- Freeze Margin meter (second row, left) ----------
+\node[panel,below left=1.0cm and 0.15cm of status.south,anchor=north,
+      fill=palefreeze,draw=freeze] (margin) {};
+\node[hdr,anchor=north west] at ([xshift=6pt,yshift=-5pt]margin.north west){FREEZE MARGIN};
+\node[big,text=freeze] at ([yshift=6pt]margin.center){118\,\%};
+% mini meter along the panel floor
+\draw[draw=mute,fill=white,line width=0.6pt]
+  ([xshift=10pt,yshift=6pt]margin.south west) rectangle ([xshift=130pt,yshift=15pt]margin.south west);
+\draw[fill=freeze,draw=none]
+  ([xshift=10pt,yshift=6pt]margin.south west) rectangle ([xshift=128pt,yshift=15pt]margin.south west);
+\draw[dashed,line width=0.7pt,color=ink]
+  ([xshift=80pt,yshift=2pt]margin.south west) -- ([xshift=80pt,yshift=19pt]margin.south west);
+\node[font=\tiny,text=mute,anchor=south] at ([xshift=80pt,yshift=18pt]margin.south west){trip};
+
+% ---------- Freeze Index (second row, mid) ----------
+\node[panel,right=0.3cm of margin] (fi) {};
+\node[hdr,anchor=north west] at ([xshift=6pt,yshift=-5pt]fi.north west){FREEZE INDEX};
+\node[big,text=ink] at ([yshift=3pt]fi.center){2.14};
+\node[sub] at ([yshift=-16pt]fi.center){ratio \;\textbullet\; trip line $1.815$};
+
+% ---------- Movement Energy (second row, right) ----------
+\node[panel,right=0.3cm of fi,fill=paleteal,draw=teal] (energy) {};
+\node[hdr,anchor=north west,text=teal] at ([xshift=6pt,yshift=-5pt]energy.north west){MOVEMENT ENERGY};
+\node[big,text=teal] at ([yshift=3pt]energy.center){high};
+\node[sub] at ([yshift=-16pt]energy.center){0.5--8\,Hz \;\textbullet\; gate: \textbf{MOVING}};
+
+% ---------- third row ----------
+\node[panel,below=0.9cm of margin.south,anchor=north,
+      minimum width=4.6cm] (loco) {};
+\node[hdr,anchor=north west] at ([xshift=6pt,yshift=-5pt]loco.north west){LOCOMOTION POWER};
+\node[big,text=ink] at ([yshift=2pt]loco.center){low};
+\node[sub] at ([yshift=-16pt]loco.center){0.5--3\,Hz \;\textbullet\; walking rhythm};
+
+\node[panel,right=0.3cm of loco,fill=paleamber,draw=amber] (tremor) {};
+\node[hdr,anchor=north west,text=amber] at ([xshift=6pt,yshift=-5pt]tremor.north west){TREMOR POWER};
+\node[big,text=amber] at ([yshift=2pt]tremor.center){present};
+\node[sub] at ([yshift=-16pt]tremor.center){4--6\,Hz \;\textbullet\; rest-tremor band};
+
+\node[panel,right=0.3cm of tremor] (wave) {};
+\node[hdr,anchor=north west] at ([xshift=6pt,yshift=-5pt]wave.north west){ACCELEROMETER};
+% tiny jittery trace, drawn relative to the panel centre
+\begin{scope}[shift={([yshift=2pt]wave.center)}]
+  \draw[line width=0.5pt,color=steel] plot[smooth,tension=0.6]
+    coordinates {(-1.6,-0.12)(-1.3,0.2)(-1.0,-0.24)(-0.7,0.28)(-0.4,-0.16)(-0.1,0.32)(0.2,-0.28)(0.5,0.24)(0.8,-0.2)(1.1,0.26)(1.45,-0.14)};
+\end{scope}
+\node[sub] at ([yshift=-18pt]wave.center){raw 3-axis @ 64\,Hz};
+
+% ---------- spine flow arrows ----------
+% second-row evidence flows right-to-left: gate (energy) -> FI -> margin
+\draw[flow] (energy) -- (fi);
+\draw[flow] (fi) -- (margin);
+% one clean arrow rises from the margin meter up into the verdict banner
+\draw[flow] (margin.north) -- ([yshift=-0.02cm]margin.north|-status.south);
+
+% ---------- callouts ----------
+\node[call,text width=3.5cm,anchor=west] (c1) at ([xshift=0.35cm]status.east|-status.center){};
+\node[call,text width=3.6cm] at ([xshift=2.0cm,yshift=0.0cm]status.east)
+  {\textbf{The verdict.}\\ Red dot + word.\\ Built from the three panels below.};
+
+\node[call,text width=3.4cm] at ([xshift=-2.2cm,yshift=0.0cm]margin.west)
+  {\textbf{How close to a freeze?}\\ FI as \% of the trip.\\ $>$100\,\% $\Rightarrow$ over.};
+
+\node[call,text width=3.4cm] at ([xshift=2.25cm,yshift=0.0cm]energy.east)
+  {\textbf{The gate.}\\ Below floor $\Rightarrow$ forced STILL,\\ margin shows ``\textemdash/at rest''.};
+
+\node[call,text width=3.4cm] at ([xshift=2.25cm,yshift=0.0cm]wave.east)
+  {\textbf{Ground truth.}\\ The shuffle you would\\ see by eye, in numbers.};
+
+\end{tikzpicture}}
+\caption{Annotated mock of the live web dashboard. The red \textsc{Gait Status} banner
+is the single verdict; the six panels beneath it are the evidence. Heavy navy arrows
+trace the decision spine: \emph{Movement Energy} (the gate) feeds the \emph{Freeze
+Index}, which feeds the \emph{Freeze Margin} meter and, after debounce, the verdict.
+Colours follow the report palette: teal $=$ sensing/energy, amber $=$ tremor, red $=$
+the freeze decision.}
+\label{fig:dash-mock}
+\end{figure}
+
+\begin{intuition}
+Think of the panels as a courtroom. \emph{Movement Energy} is the bailiff at the door:
+if the leg is barely moving, the case is dismissed before it starts and the verdict is
+\textbf{STILL}. \emph{Freeze Index} is the prosecutor: given that the leg \emph{is}
+moving, it argues whether the movement is the fast 3--8\,Hz shuffle of a freeze or the
+slower swing of a walk. \emph{Debounce} is the jury foreman, refusing to convict on a
+single noisy instant. \emph{Gait Status} reads out the sentence.
+\end{intuition}
+
+\subsection{The two quantities everything is built from}
+
+Before the panels make sense, two numbers must be clear, because every other panel is a
+slice or a combination of them. Both are computed on the mean-removed acceleration
+\emph{magnitude} $a=\sqrt{a_x^2+a_y^2+a_z^2}$ over the current 4-second window, and both
+are sums of the Welch power spectrum over a frequency band.
+
+\begin{mathsbox}
+\textbf{Band power} is the area under the power spectrum across a band --- literally how
+much wiggle energy lives at those frequencies. Cadence reads three bands:
+\[
+P_{\text{loco}} = P(0.5\text{--}3\,\text{Hz}),\quad
+P_{\text{freeze}} = P(3\text{--}8\,\text{Hz}),\quad
+P_{\text{tremor}} = P(4\text{--}6\,\text{Hz}).
+\]
+From these, the two master quantities are
+\[
+\boxed{\;\FI = \dfrac{P_{\text{freeze}}}{P_{\text{loco}}+10^{-9}}\;}
+\qquad\text{and}\qquad
+\boxed{\;E_{\text{move}} = P_{\text{loco}} + P_{\text{freeze}}\;}.
+\]
+$\FI$ is a \emph{ratio} (the freeze band \emph{divided by} the walking band), so it is
+scale-invariant: it does not care whether you measure in mg or g. $E_{\text{move}}$ is a
+\emph{sum} (the two bands \emph{added}), so it grows with how hard the leg is actually
+moving and is \emph{not} scale-invariant. The tiny $10^{-9}$ stops a perfectly still leg
+from dividing by zero.
+\end{mathsbox}
+
+This single pair of formulas is the Rosetta Stone for the whole dashboard:
+
+\begin{itemize}
+\item \textbf{Locomotion Power} \emph{is} $P_{\text{loco}}$ --- the denominator of $\FI$
+  and one half of $E_{\text{move}}$.
+\item \textbf{Tremor Power} \emph{is} $P_{\text{tremor}}$ --- a narrow sub-band sitting
+  \emph{inside} the freeze band.
+\item \textbf{Freeze Index} \emph{is} $\FI$ --- freeze band over loco band.
+\item \textbf{Movement Energy} \emph{is} $E_{\text{move}}$ --- freeze band plus loco band.
+\item \textbf{Freeze Margin} re-expresses $\FI$ as a percentage of the trip line.
+\item \textbf{Gait Status} combines the gate (on $E_{\text{move}}$), $\FI$, and debounce.
+\end{itemize}
+
+\begin{keyidea}
+Same two ingredients, different recipe. \emph{Divide} the freeze band by the walking
+band and you get the \textbf{shape} of the motion ($\FI$ --- \emph{is this fast or
+slow?}). \emph{Add} them and you get the \textbf{amount} of motion ($E_{\text{move}}$
+--- \emph{is the leg moving at all?}). The dashboard needs both: amount to know whether
+to bother, shape to know whether it is a freeze.
+\end{keyidea}
+
+\subsection{Panel by panel}
+
+\subsubsection*{Gait Status --- the verdict}
+
+This is the only panel a hurried reader needs. It shows one of three words with a
+matching NeoPixel colour: \textbf{STILL} (the leg is at rest), \textbf{WALKING} (ordinary
+gait), or \textbf{FREEZE} (red --- a freeze-of-gait episode is happening \emph{now}).
+The verdict is not read off any single dial; it is the output of the three-step state
+machine:
+\begin{enumerate}
+\item \textbf{Gate.} If $E_{\text{move}}$ is below the auto-calibrated still-floor, the
+  leg is not really moving $\Rightarrow$ \textbf{STILL}. Stop here.
+\item \textbf{Classify.} Otherwise, if $\FI > 1.815$, the moving leg is shuffling fast
+  $\Rightarrow$ candidate \textbf{FREEZE}; else $\Rightarrow$ candidate \textbf{WALKING}.
+\item \textbf{Debounce.} A new candidate must persist for \emph{two} consecutive
+  2-second control windows before it is committed (assert-after-2, release-after-2).
+\end{enumerate}
+
+\begin{intuition}
+Why debounce? One heel-strike, one stumble, one bump against a table leg can spike $\FI$
+for a single window. Without debounce the banner would flicker FREEZE for two seconds
+every time the wearer kicked a kerb. Requiring two windows in a row means a real
+verdict is at most $\sim$2\,s late but is never a phantom.
+\end{intuition}
+
+\subsubsection*{Freeze Margin --- the glass-box confidence}
+
+This meter is the newest panel and the most useful for ``how worried should I be?''. It
+expresses the live $\FI$ as a percentage of the $1.815$ trip line:
+\[
+\text{margin} = \frac{\FI}{1.815}\times 100\,\%.
+\]
+At \textbf{100\,\%} the leg is exactly on the trip line; \textbf{above 100\,\%} it has
+crossed into freeze territory; well below 100\,\% the gait is comfortably calm. Crucially,
+when the gate has forced the state to STILL, the meter does \emph{not} show a misleading
+small percentage --- it shows ``\,\textemdash\,/ at rest\,'', because a freeze ratio computed on a
+motionless leg is meaningless noise.
+
+\begin{keyidea}
+The Freeze Margin replaces the old, blank ``probability'' box. In glass-box (FI) mode
+the CNN is \emph{bypassed} entirely, so there was never a neural-network probability to
+display --- the box sat empty and confused people. The margin meter fills that slot with
+something the FI detector can actually justify: a transparent ``percent of the way to a
+freeze'' that you can recompute by hand from $\FI$ and $1.815$.
+\end{keyidea}
+
+\subsubsection*{Freeze Index --- the raw ratio}
+
+The same $\FI$ as a bare number, with the trip line drawn at $1.815$. A calm walk sits
+around $\FI\approx 0.5$--$1$; a genuine freeze pushes well above $2$, and on real
+captures the freeze peaks reach into the tens (the worksheet capture peaked at $21.35$).
+The dashboard caps the displayed scale so a single off-the-chart spike does not flatten
+the rest of the trace --- the same off-scale behaviour visible in
+Figure~\ref{fig:smoke}, where one freeze window's $\FI$ runs clean off the top of the
+axis.
+
+\subsubsection*{Tremor Power --- the rest-tremor band}
+
+This panel reports $P_{\text{tremor}}$, the power in the narrow 4--6\,Hz rest-tremor band,
+with a \textbf{present / clear} badge. Parkinsonian rest tremor lives here, partly
+overlapping the lower freeze band. It is reported as a separate readout (not folded into
+the verdict) so a clinician can see tremor activity independently of the freeze decision
+--- the leg can tremble without freezing, and vice versa.
+
+\subsubsection*{Movement Energy --- the gate}
+
+This is $E_{\text{move}} = P_{\text{loco}}+P_{\text{freeze}}$, the 0.5--8\,Hz energy,
+shown with a \textbf{MOVING / STILL} badge that fires when the energy crosses the
+auto-calibrated still-floor. It answers one question only: \emph{is the leg doing
+anything at all?} A still leg has near-zero energy; the gate is what stops sensor noise
+on a motionless ankle from producing a large, meaningless $\FI$ and a phantom freeze.
+Because $E_{\text{move}}$ is a raw sum (not a ratio), it is the one panel whose absolute
+value genuinely tracks ``how hard the leg is moving.''
+
+\subsubsection*{Locomotion Power --- the walking rhythm}
+
+This is $P_{\text{loco}}$, the 0.5--3\,Hz power: the energy of the slow, rhythmic leg
+swing of ordinary walking. It is high during a steady walk and low at rest. It is also
+the \emph{denominator} of $\FI$ --- which is exactly why a freeze stands out: during a
+freeze the walking rhythm collapses ($P_{\text{loco}}$ falls) while the fast shuffle
+grows ($P_{\text{freeze}}$ rises), so their ratio $\FI$ shoots up.
+
+\subsubsection*{Accelerometer waveform --- the ground truth}
+
+The live raw 3-axis trace at 64\,Hz. This is the unprocessed reality every other panel is
+distilled from: calm gait looks like clean periodic swings, a freeze looks like a burst
+of fast, low-amplitude trembling ``in place,'' and rest looks nearly flat. A skilled eye
+can read a freeze straight off this trace; the other panels exist to do that reading
+automatically and continuously.
+
+\begin{table}[htbp]
+\centering
+\caption{Reading the dashboard. Each panel, what it measures, the one-line intuition,
+and the values you typically see when the leg is still, walking, or freezing. ``band''
+refers to the Welch power spectrum of the mean-removed magnitude.}
+\label{tab:panels}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}p{2.5cm} p{3.0cm} p{3.4cm} >{\raggedright\arraybackslash}p{5.3cm}@{}}
+\toprule
+\textbf{Panel} & \textbf{What it shows} & \textbf{Intuition} & \textbf{Still / Walk / Freeze} \\
+\midrule
+\textbf{Gait Status}
+  & STILL / WALKING / FREEZE
+  & The verdict: gate $\to\FI\to$ debounce
+  & STILL~/ WALKING~/ \textcolor{freeze}{\textbf{FREEZE}} \\
+\textbf{Freeze Margin}
+  & $\FI$ as \% of the $1.815$ trip
+  & How close to a freeze (glass-box confidence)
+  & ``\textemdash/at rest'' / $\sim$30--55\,\% / $\ge$100\,\% \\
+\textbf{Freeze Index}
+  & $\FI = P_{\text{freeze}}/P_{\text{loco}}$
+  & Fast shuffle vs.\ slow swing (a ratio)
+  & gated / $\approx$0.5--1 / $>$2, up to 20+ \\
+\textbf{Tremor Power}
+  & 4--6\,Hz band power
+  & Rest-tremor activity, reported separately
+  & clear / clear / present (often) \\
+\textbf{Movement Energy}
+  & $P_{\text{loco}}+P_{\text{freeze}}$ (0.5--8\,Hz)
+  & How hard the leg moves --- the gate
+  & STILL (low) / MOVING (high) / MOVING \\
+\textbf{Locomotion Power}
+  & 0.5--3\,Hz band power
+  & The walking-rhythm energy
+  & low / high / collapses \\
+\textbf{Accelerometer}
+  & raw 3-axis trace @ 64\,Hz
+  & The shuffle you would see by eye
+  & flat / clean swings / fast tremble \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Reading a real run off the screen}
+
+Figure~\ref{fig:smoke} is a recorded smoketest, and it shows in one picture exactly what
+the dashboard animates live. The top trace is the accelerometer magnitude through four
+labelled phases; the bottom trace is the Freeze Index against its trip line. Walk the
+panels through it:
+
+\begin{itemize}
+\item \textbf{Phase 0 (rest).} The magnitude is nearly flat. \emph{Movement Energy} is
+  below the still-floor, so the gate fires, \emph{Gait Status} reads \textbf{STILL}, and
+  the \emph{Freeze Margin} shows ``\textemdash/at rest'' --- regardless of whatever noisy $\FI$ the
+  bottom trace happens to show, because a gated leg is never called a freeze.
+\item \textbf{Phase 1 (walking).} The magnitude breaks into large, regular swings.
+  \emph{Locomotion Power} (and hence \emph{Movement Energy}) rises, so the gate opens and
+  the leg is \textbf{MOVING}. But the energy is dominated by the slow walking rhythm, so
+  $\FI$ mostly sits at or below the dashed trip line: \emph{Gait Status} reads
+  \textbf{WALKING}.
+\item \textbf{Phases 2--3 (freeze).} The magnitude turns into bursts of fast, lower-amplitude
+  trembling. Now the freeze band swells while the walking band collapses, so $\FI$ spikes
+  hard --- one window even runs off the top of the axis (a freeze peak the figure marks
+  as off-scale). The \emph{Freeze Margin} crosses 100\,\%, and after two consecutive
+  windows confirm it the debounce commits the verdict: \emph{Gait Status} turns red,
+  \textbf{FREEZE}.
+\end{itemize}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.92\linewidth]{smoketest_trace}
+\caption{A recorded smoketest, exactly the signals the dashboard animates live.
+\emph{Top:} accelerometer magnitude $\norm{a}$ in mg across four phases --- flat at rest,
+big regular swings while walking, fast low-amplitude bursts during a freeze.
+\emph{Bottom:} the Freeze Index against its trip line (dashed). At rest the gate forces
+STILL; walking keeps $\FI$ near or below the line; the freeze drives $\FI$ far above it,
+with one window's peak running clean off the top of the axis. Reading the two traces
+together is exactly what the seven panels do, automatically, every two seconds.}
+\label{fig:smoke}
+\end{figure}
+
+\begin{takeaway}
+To read the leg off the screen in three seconds: glance at \textbf{Movement Energy} (is
+it moving?); if yes, glance at the \textbf{Freeze Margin} (over 100\,\% $=$ freeze); the
+\textbf{Gait Status} banner has already done both, plus debounce, and shows the answer in
+one word and one colour. Everything else on the page is there to let you check that
+answer by hand.
+\end{takeaway}

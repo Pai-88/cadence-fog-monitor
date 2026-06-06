@@ -1,0 +1,289 @@
+\section{Hardware}
+\label{sec:hardware}
+
+Everything in the earlier sections --- the magnitude, the Welch spectrum, the
+freeze index, the gate-and-debounce state machine --- has to run on something small
+enough to live on an ankle and cheap enough to build in a one-week sprint. This
+section describes that physical build: the single sensing board, the one external
+display, the optional wireless bridge, how it all sits inside an ankle sleeve, and
+the two firmware ``personalities'' the same board can wear.
+
+\begin{keyidea}
+Cadence is a \textbf{monitor}, not a therapy. A coin vibration motor is physically
+fitted to the build, but it is \textbf{disabled in firmware}: the device never buzzes,
+cues, or stimulates. Every freeze it finds is \emph{reported} --- on an OLED, on the
+onboard LEDs, and on a live web dashboard --- and nothing more. Read every mention of
+the motor below as ``present on the board, held off in software.''
+\end{keyidea}
+
+\subsection{The one board that does the work: Circuit Playground Express}
+
+The heart of Cadence is a single \textbf{Adafruit Circuit Playground Express (CPX)}.
+It is a 51\,mm disc that already carries everything the core detector needs, so the
+sensing, the maths, and the local display all happen on one part:
+
+\begin{itemize}
+  \item a \textbf{SAMD21} Arm Cortex-M0+ microcontroller --- the CPU that runs the DSP;
+  \item an onboard \textbf{LIS3DH} 3-axis MEMS accelerometer (I\textsuperscript{2}C),
+        the only sensor Cadence uses, sampled at \textbf{64\,Hz} on the
+        \(\pm 8\,\mathrm{g}\) range;
+  \item a ring of \textbf{10 NeoPixels} that we drive as a colour-coded state light;
+  \item two push-buttons and a \textbf{slide switch} we repurpose as mode/enable inputs;
+  \item 2\,MB of SPI flash for untethered logging.
+\end{itemize}
+
+\begin{intuition}
+Why one disc instead of a pile of breakout boards? In a one-week wearable sprint the
+enemy is wiring. The CPX folds the MCU, the accelerometer, and the status LEDs into a
+part you can sew flat against the limb with \emph{zero} jumper wires for the core job.
+The only wires we add are the four that drive an external screen --- and even those
+are optional.
+\end{intuition}
+
+The \(\pm 8\,\mathrm{g}\) range is a deliberate choice, not a default. Heel-strike
+transients at the ankle routinely exceed \(\pm 2\,\mathrm{g}\), so a \(\pm 2\,\mathrm{g}\)
+setting would clip the very peaks that separate vigorous gait from a freeze. The
+\(64\,\mathrm{Hz}\) sample rate gives a Nyquist limit of \(32\,\mathrm{Hz}\), which sits
+comfortably above the highest band of interest (the \(3\text{--}8\,\mathrm{Hz}\) freeze
+band, and the \(4\text{--}6\,\mathrm{Hz}\) rest-tremor band), so nothing of clinical
+interest aliases.
+
+\subsection{Pins and connections}
+
+The wiring is dominated by one addition: an external \textbf{SSD1306} OLED for the
+live freeze read-out. The CPX's onboard I\textsuperscript{2}C bus is already busy with
+the LIS3DH accelerometer, so the OLED is driven on a \emph{second} I\textsuperscript{2}C
+bus brought out on the CPX pads --- \textbf{SDA = A5}, \textbf{SCL = A4} --- using a
+separate \code{Wire} instance. Keeping the screen off the sensor's bus means a slow or
+chatty display can never stall an accelerometer read. Figure~\ref{fig:wiring} gives the
+full pad-by-pad map of the build.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.86\linewidth]{wiring_pinout}
+  \caption{Pad-by-pad wiring of the Cadence build. The CPX senses, runs the freeze-index
+  detector, drives the onboard NeoPixel ring, and brings out a second
+  I\textsuperscript{2}C bus (A5/A4) for the external SSD1306 OLED; three UART wires
+  (A7/A6 + a shared ground, 3.3\,V logic, no level shifter) form the optional link to an
+  ESP32 Wi-Fi bridge. \emph{Note:} this sheet is inherited from an earlier closed-loop
+  iteration and still annotates the coin motor as a ``cue'' on A1; in shipped Cadence
+  firmware that motor pin is held off --- the device is a monitor.}
+  \label{fig:wiring}
+\end{figure}
+
+\begin{table}[H]
+  \centering
+  \small
+  \caption{Key connections on the Circuit Playground Express. The first block is the
+  always-present core; the second block is the optional wireless bridge.}
+  \label{tab:pins}
+  \begin{tabular}{@{}llp{6.2cm}@{}}
+    \toprule
+    \textbf{CPX pin / part} & \textbf{Direction} & \textbf{Role in Cadence} \\
+    \midrule
+    LIS3DH accel  & onboard I\textsuperscript{2}C & 3-axis sensor, 64\,Hz, \(\pm 8\,\mathrm{g}\) --- the only sensor used \\
+    NeoPixels \(\times 10\) & onboard out & state-colour ring (still / walking / freeze) \\
+    Slide switch  & onboard in & selects RECORDER vs.\ MONITOR role \\
+    Button A      & onboard in & hold-still calibration of the still-floor gate \\
+    A5 (SDA2)     & out (I\textsuperscript{2}C) & external SSD1306 OLED data \\
+    A4 (SCL2)     & out (I\textsuperscript{2}C) & external SSD1306 OLED clock \\
+    A1            & out (held off) & coin vibration motor --- \textbf{disabled in firmware} \\
+    GND           & power (0\,V) & common ground (shared with the ESP32) \\
+    \addlinespace
+    A7            & UART TX & \(a_x,a_y,a_z\) stream out to ESP32 (optional bridge) \\
+    A6            & UART RX & control bytes in from ESP32 (optional bridge) \\
+    micro-USB     & 5\,V in & power; also the USB link for log download \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Telling the wearer: NeoPixels and the OLED}
+
+Cadence has two local outputs, both read-only indicators of the same state machine:
+
+\begin{itemize}
+  \item the \textbf{NeoPixel ring} is a glanceable colour light --- it shows the
+        headline \textsc{still} / \textsc{walking} / \textsc{freeze} verdict at arm's
+        length, with red reserved for a committed freeze;
+  \item the \textbf{SSD1306 OLED} carries the detail the LEDs cannot: the live freeze
+        index, the movement-energy gate state, and a text label of the current phase.
+\end{itemize}
+
+Both are downstream of the gate \(\rightarrow\) FI \(\rightarrow\) debounce pipeline of
+Section~\ref{sec:detector}; neither feeds back into the decision. Putting the screen on
+its own bus (A5/A4) is what lets the OLED be as slow as it likes without ever delaying a
+64\,Hz accelerometer sample.
+
+\subsection{Going wireless: the optional 3-board topology}
+
+The standalone build is fully untethered: the CPX senses, decides, and displays on the
+ankle, powered from a small battery over USB. For a richer, screen-rich \emph{live}
+view --- the web dashboard of Section~\ref{sec:dashboard} --- Cadence offers an optional
+three-board topology that adds an \textbf{ESP32} as a Wi-Fi bridge between the ankle and
+a laptop.
+
+\begin{figure}[H]
+  \centering
+  \resizebox{0.96\textwidth}{!}{%
+  \begin{tikzpicture}[
+      font=\sffamily,
+      box/.style={rounded corners=3pt,draw=#1,line width=1pt,fill=#1!8,
+                  minimum width=3.5cm,minimum height=1.9cm,align=center,inner sep=5pt},
+      lbl/.style={font=\footnotesize\bfseries},
+      sub/.style={font=\scriptsize\color{mute}},
+    ]
+    % --- the three boards, generously spaced ---
+    \node[box=teal]  (cpx)    {\textbf{CPX (ankle)}\\[2pt]
+                               {\scriptsize\color{mute} LIS3DH @ 64\,Hz}\\
+                               {\scriptsize\color{mute} on-board FI detector}\\
+                               {\scriptsize\color{mute} NeoPixels + OLED}};
+    \node[box=navy,right=3.0cm of cpx] (esp) {\textbf{ESP32}\\[2pt]
+                               {\scriptsize\color{mute} UART\,$\leftrightarrow$\,Wi-Fi bridge}\\
+                               {\scriptsize\color{mute} relays the stream}\\
+                               {\scriptsize\color{mute} no on-board decision}};
+    \node[box=steel,right=3.0cm of esp] (host) {\textbf{Laptop}\\[2pt]
+                               {\scriptsize\color{mute} dashboard server}\\
+                               {\scriptsize\color{mute} optional CNN}\\
+                               {\scriptsize\color{mute} renders live panels}};
+
+    % --- forward data path: accel stream travels right ---
+    \draw[-{Latex[length=2.6mm]},teal,line width=1.1pt]
+      ($(cpx.east)+(0,0.32)$) -- node[lbl,above,yshift=1pt,teal]{UART}
+      node[sub,below,yshift=-1pt]{$a_x,a_y,a_z$ @ 64\,Hz}
+      ($(esp.west)+(0,0.32)$);
+    \draw[-{Latex[length=2.6mm]},navy,line width=1.1pt]
+      ($(esp.east)+(0,0.32)$) -- node[lbl,above,yshift=1pt,navy]{Wi-Fi / TCP}
+      node[sub,below,yshift=-1pt]{packets}
+      ($(host.west)+(0,0.32)$);
+
+    % --- return control path: thin, runs back left ---
+    \draw[-{Latex[length=2.4mm]},freeze,densely dashed,line width=0.9pt]
+      ($(host.west)+(0,-0.42)$) --
+      node[sub,below,yshift=-1pt,freeze]{control / status} ($(esp.east)+(0,-0.42)$);
+    \draw[-{Latex[length=2.4mm]},freeze,densely dashed,line width=0.9pt]
+      ($(esp.west)+(0,-0.42)$) -- ($(cpx.east)+(0,-0.42)$);
+
+    % --- annotations under the row ---
+    \node[sub,below=0.7cm of cpx.south,align=center]
+      {sensing + decision\\ on the ankle};
+    \node[sub,below=0.7cm of esp.south,align=center]
+      {dumb relay\\ (3.3\,V logic,\\ shared ground)};
+    \node[sub,below=0.7cm of host.south,align=center]
+      {display + analytics\\ off the body};
+  \end{tikzpicture}}
+  \caption{The optional 3-board topology: \textbf{CPX}
+  \(\;\xrightarrow{\;\text{UART}\;}\;\) \textbf{ESP32}
+  \(\;\xrightarrow{\;\text{Wi-Fi/TCP}\;}\;\) \textbf{laptop}. The accelerometer
+  stream flows right (solid); thin control/status bytes return left (dashed). The ESP32
+  is a pure bridge --- it makes no decisions. Because both the CPX and ESP32 run at
+  3.3\,V logic and share a ground, the UART wires connect directly with no level shifter.}
+  \label{fig:topology}
+\end{figure}
+
+\begin{intuition}
+The split is ``decide near the sensor, display far from it.'' The freeze decision is
+small and latency-sensitive, so it stays on the ankle. Pixels, charts, and any
+heavier model are big and not safety-critical, so they live on a laptop the wearer
+need not carry. The ESP32 in the middle is deliberately dumb: it shuttles bytes and
+nothing else, which keeps the part that matters --- the detector --- on one well-tested
+board.
+\end{intuition}
+
+\subsection{Wearing it: the ankle sleeve}
+
+Cadence is built into a snug compression ankle sleeve with flat internal pockets, so
+nothing dangles and the sensor is firmly coupled to the limb. Firm coupling matters:
+a loose sensor would swing like a pendulum and pollute the very band the freeze index
+reads. The CPX and the battery sit in opposite flat pockets so their masses balance
+near the limb axis, the optional motor sits in a thin pocket against the skin, and the
+whole assembly is light. Figure~\ref{fig:sleeve} shows the layout from the side, in
+cross-section, and as a flat-pocket layer stack.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.97\linewidth]{sleeve_layout}
+  \caption{Ankle-sleeve integration: (A) lateral view on the right leg, (B)
+  cross-section looking toward the foot, (C) the flat-pocket layer stack. The sleeve is
+  snug so the accelerometer reads true limb motion rather than pendulum swing; CPX and
+  battery sit on opposite faces to balance; the build sits flush with nothing to snag.
+  The vibration motor shown against the skin is fitted but, in Cadence's monitor
+  firmware, held off.}
+  \label{fig:sleeve}
+\end{figure}
+
+Power is a small LiPo cell delivered to the CPX over its USB connector; the same USB
+connection doubles as the link for pulling logged data off the board. In the wireless
+build the ESP32 is powered alongside the CPX and shares its ground, which is exactly why
+the UART lines need no level translation.
+
+\subsection{Two firmware roles on one board}
+
+The same CPX wears one of two firmware ``personalities,'' chosen so the project can both
+\emph{gather} labelled data and \emph{run live} without changing hardware. The slide
+switch selects between them.
+
+\begin{table}[H]
+  \centering
+  \small
+  \caption{The two firmware roles. One board, one accelerometer --- two jobs.}
+  \label{tab:roles}
+  \begin{tabular}{@{}p{2.4cm}p{6.0cm}p{6.0cm}@{}}
+    \toprule
+     & \textbf{RECORDER} & \textbf{MONITOR} \\
+    \midrule
+    Sketch    & \code{cpx\_fog\_logger.ino} & \code{cpx\_fog\_standalone.ino} \\
+    Purpose   & capture raw accel + auto-labelled phases for analysis & live freeze detection and display \\
+    Trigger   & flip the slide switch to start/stop logging & runs continuously on power-up \\
+    Stores to & 2\,MB onboard SPI flash, untethered & nothing --- decides every 2\,s in RAM \\
+    Output    & a file pulled later over USB with \code{cpx\_dump.py} & live OLED text + NeoPixel state colours \\
+    Motor     & n/a & fitted but disabled \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The \textbf{RECORDER} role is how the project earns its right to claim real numbers: a
+clinician or wearer flips the slide switch, walks (and freezes), and the board logs
+accelerometer samples with auto-labelled phases to flash with no laptop attached. Later
+the file is pulled over USB with \code{cpx\_dump.py} for the offline analysis behind every
+result in this report. The \textbf{MONITOR} role is the shipped device: it runs the
+gate~\(\rightarrow\)~FI~\(\rightarrow\)~debounce pipeline live and paints the verdict onto
+the OLED and LEDs.
+
+\subsection{Does it fit on the chip?}
+
+A fair question for a Cortex-M0+ with no floating-point unit: can the SAMD21 finish a
+window of DSP inside its budget? The arithmetic is comfortable. A decision is due only
+once every \textbf{2\,s} (the 128-sample hop), and the work per decision is one
+Hann-tapered Welch PSD over a 256-sample window plus a handful of band-power sums and a
+single ratio. That is a few thousand multiply-adds spread across a two-second window ---
+well within the SAMD21's headroom, leaving the CPU mostly idle between decisions to
+service the 64\,Hz sampling, the LEDs, and the OLED. Figure~\ref{fig:flow} traces that
+whole MONITOR loop end to end.
+
+\begin{keyidea}
+The cadence of the whole device is set by the 2\,s hop, not by raw compute. The long
+4\,s window is what buys the spectral resolution to separate the \(3\text{--}8\,\mathrm{Hz}\)
+freeze band from the walking rhythm; the 2\,s hop is how often that window is re-scored.
+Both numbers are about \emph{seeing the freeze clearly}, and both leave the little SAMD21
+with time to spare.
+\end{keyidea}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[height=0.73\textheight]{coding_flowchart}
+  \caption{The MONITOR firmware loop (\code{cpx\_fog\_standalone.ino}): read the three
+  axes at 64\,Hz, form the magnitude, keep the last 256 samples (4\,s), and once every
+  2\,s compute the freeze index and movement energy, apply the still-floor gate, the
+  \(\FI>1.815\) test and the assert/release-after-two debounce, then update the
+  NeoPixels and log line. \emph{Note:} this diagram is inherited from a closed-loop
+  iteration and still draws a ``motor cue'' block; in shipped Cadence that output path
+  is held off --- only the NeoPixel/OLED/serial update is active.}
+  \label{fig:flow}
+\end{figure}
+
+\begin{takeaway}
+One 51\,mm board does the sensing and the decision; one external OLED and the onboard
+LEDs report it; an optional ESP32 carries it to a laptop dashboard. The coin motor is
+on the board but off in code --- Cadence watches for freezes and tells you, and that is
+all.
+\end{takeaway}

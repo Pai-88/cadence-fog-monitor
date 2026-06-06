@@ -1,0 +1,68 @@
+==============================================================
+ CADENCE — HOW TO LIVE-DISPLAY A RECORDING
+ (everything runs from the pi/ folder; copy-paste each line)
+==============================================================
+
+STEP 0 — open Terminal and go to the project (do this once):
+
+    cd ~/Documents/scenario2_pd/pi
+
+
+--------------------------------------------------------------
+STEP 1 — pull the recording off the CPX  (only if it's still
+         on the board's flash). Plug the CPX in via USB first.
+--------------------------------------------------------------
+
+    .venv/bin/python cpx_dump.py walk1
+
+  - Saves it to  accuracy_figs/captures/walk1.csv
+  - Change "walk1" to any name you like — that name is what
+    you display in Step 2.
+  - Just check it's there without dumping:
+
+    .venv/bin/python cpx_dump.py walk1 --status
+
+
+--------------------------------------------------------------
+STEP 2 — live-display it on the dashboard:
+--------------------------------------------------------------
+
+    ./demo_display.sh walk1
+
+  Then open this in your browser:
+
+    http://127.0.0.1:8000/
+
+  Press  Ctrl-C  in the Terminal to stop the dashboard.
+
+
+--------------------------------------------------------------
+ALREADY HAVE A CSV?  (skip Step 1)
+--------------------------------------------------------------
+Anything in accuracy_figs/captures/ plays instantly:
+
+    ./demo_display.sh smoketest
+
+  Captures available now:
+    ankle_run   capture1   smoke_live   smoketest   stream1   stream2
+
+
+--------------------------------------------------------------
+MARK WHICH PHASES ARE FREEZES  (default is 2,4)
+--------------------------------------------------------------
+
+    ./demo_display.sh walk1 2,4        # phases 2 and 4 = FREEZE
+
+
+--------------------------------------------------------------
+TWO GOTCHAS
+--------------------------------------------------------------
+1. DUMP BEFORE YOU RE-RECORD. Flipping the slide switch to
+   start a new capture ERASES the old one off the flash.
+   So always run Step 1 before recording again.
+
+2. Run from the pi/ folder, and use  .venv/bin/python
+   (not plain "python") — that venv has the serial + server
+   libraries.
+
+==============================================================

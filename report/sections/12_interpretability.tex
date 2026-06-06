@@ -1,0 +1,223 @@
+\section{Interpretability: Opening the Box}
+\label{sec:interpretability}
+
+Cadence ships a detector you can read like a recipe: gate the leg as moving,
+compute the Freeze Index, compare it against a single printed number. Nothing is
+hidden. But the project also explored two richer learners --- the FoGNet CNN of the
+previous section and, sitting between the two extremes, a small \emph{glass-box}
+RandomForest built from nine hand-named features. This section uses that forest as a
+worked example of \emph{interpretability}: a set of tools that pry open a trained
+model and ask \emph{which inputs it actually leans on, and in which direction}. We
+then return to the design question that matters clinically --- why a wearable that
+warns a person about their own falls should prefer a rule it can defend over a
+network it cannot.
+
+\begin{keyidea}
+A \textbf{black box} (the CNN) maps a raw window straight to $P(\text{freeze})$; its
+18\,k weights are accurate but mute --- they cannot tell you \emph{why}. A
+\textbf{glass box} reasons over named quantities a clinician already understands
+(jerk, dominant frequency, band powers), so every verdict comes with an audit trail.
+Cadence's shipped Freeze Index is the most transparent box of all: one ratio, one
+threshold, fully traceable by hand.
+\end{keyidea}
+
+\subsection{The interpretable alternative: a 9-feature RandomForest}
+
+Instead of feeding the network 256 raw samples per axis, the forest is handed nine
+summary numbers computed from the same 4\,s window: the band powers Cadence already
+measures (\code{loco\_power}, \code{freeze\_power}, \code{tremor\_power},
+\code{total\_power}), the $\FI$ itself (\code{freeze\_index}), the magnitude
+statistics \code{mag\_rms} and \code{mag\_range}, the dominant frequency
+\code{dom\_freq}, and \code{jerk\_rms} (the RMS of the magnitude's time-derivative ---
+how abruptly the leg's acceleration changes). A RandomForest is an ensemble of
+decision trees, each a chain of \code{if feature $>$ threshold} splits; every split
+is a question you can read aloud. Under nested leave-one-subject-out
+cross-validation, at its operating point $t^\star\!\approx\!0.10$ the forest reaches
+\textbf{sensitivity 0.75} and \textbf{specificity 0.76}, and as a threshold-free
+ranker it scores \textbf{ROC-AUC 0.82} (PR-AUC 0.33). That is a balanced,
+honest detector --- and, crucially, one whose decisions we can interrogate with the
+three tools below.
+
+\begin{takeaway}
+The forest trades a sliver of the CNN's raw ceiling for something the network cannot
+offer at any price: every prediction decomposes into contributions from features a
+neurologist can name.
+\end{takeaway}
+
+\subsection{Permutation importance: break a feature, watch the score fall}
+
+The first question of any model is \emph{which inputs does it actually use?} Permutation
+importance answers it by sabotage. Take a trained model and a held-out set; shuffle one
+feature's column across all windows --- so that feature now carries pure noise while
+every other feature, and the model, stay exactly as they were --- and re-score. If
+balanced accuracy collapses, the model was relying on that feature; if nothing happens,
+the feature was decoration.
+
+\begin{mathsbox}
+For feature $j$, importance is the \emph{drop} in balanced accuracy when its column is
+randomly permuted:
+\begin{equation}
+I_j \;=\; \mathrm{BA}_{\text{intact}} \;-\; \mathbb{E}\!\left[\,\mathrm{BA}_{\text{$j$ shuffled}}\,\right].
+\label{eq:perm}
+\end{equation}
+The expectation is taken over several shuffles (the error bars in
+Fig.~\ref{fig:perm} are their spread) and averaged across the held-out subjects, so
+$I_j$ reads in the same units as accuracy: ``shuffling \code{jerk\_rms} costs the
+forest about 0.05 of balanced accuracy.'' Permuting rather than \emph{dropping} the
+column is deliberate --- it preserves that feature's marginal distribution and only
+destroys its \emph{link to the label}, isolating the information the model drew from it.
+\end{mathsbox}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.86\linewidth]{perm_importance}
+\caption{Permutation importance for the 9-feature forest (pooled LOSO, averaged over
+subjects; bars are the mean drop in balanced accuracy, whiskers the spread over
+shuffles). Energy-and-motion features --- \code{total\_power}, \code{jerk\_rms},
+\code{freeze\_power} --- carry the most weight. Strikingly, the hand-built
+\code{freeze\_index} lands \emph{last}: once the forest already has the raw band
+powers and jerk, the $\FI$ ratio adds little \emph{marginal} information. The footnote
+operating point (sensitivity 0.12, specificity 0.98) is the forest at a naive default
+threshold --- a vivid preview of \S\ref{sec:contour} on why the threshold, not the
+model, sets the trade-off.}
+\label{fig:perm}
+\end{figure}
+
+Two lessons fall out of Fig.~\ref{fig:perm}. First, the forest's muscle is in raw
+motion energy and abruptness, not in the engineered ratio --- a reminder that a clever
+hand-feature can be redundant once a learner sees its raw ingredients. Second, that
+\code{freeze\_index} ranks low \emph{inside the forest} is not a verdict against the
+$\FI$: importance is always \emph{marginal} and \emph{model-specific}. In Cadence's
+shipped detector the $\FI$ is not one voice among nine --- it \emph{is} the decision.
+
+\subsection{SHAP: why \emph{this} window was called a freeze}
+
+Permutation importance is a global headline: it ranks features over the whole
+cohort. SHAP (SHapley Additive exPlanations) is the close-up. For a single window it
+splits the model's output into a sum of per-feature contributions, each signed: a
+positive SHAP value \emph{pushed this window toward freeze}, a negative one
+\emph{pulled it back toward calm walking}.
+
+\begin{intuition}
+Picture the model's prediction as a bill split fairly among nine diners. SHAP borrows
+the Shapley value from cooperative game theory: it asks how much each feature
+\emph{adds} to the prediction, averaged over every order in which features could be
+revealed. A window with high jerk and a 3--8\,Hz dominant frequency gets a large
+positive ``jerk'' contribution and a positive ``frequency'' contribution that
+\emph{add up} to a high $P(\text{freeze})$ --- and you can read the receipt line by
+line.
+\end{intuition}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.78\linewidth]{shap_bar}
+\caption{SHAP global summary: mean $|\text{SHAP}|$ per feature, i.e.\ each feature's
+average push on the output magnitude across all windows. \code{jerk\_rms} dominates by
+a wide margin --- freezing's defining 3--8\,Hz trembling is, physically, rapid
+acceleration reversals, which is exactly what jerk measures --- followed by
+\code{dom\_freq} and \code{mag\_range}. The ranking broadly echoes
+Fig.~\ref{fig:perm} but is computed by a completely different mechanism (output
+attribution rather than accuracy sabotage); their agreement is corroboration, not
+coincidence.}
+\label{fig:shap}
+\end{figure}
+
+Averaging the magnitude of every window's SHAP values yields a global bar chart
+(Fig.~\ref{fig:shap}) that two independent methods --- permutation and SHAP --- now
+agree puts motion-and-jerk features at the top. Where SHAP earns its keep is the
+\emph{per-window} explanation it can also produce: for any flagged second, it states
+in plain features why the model raised the alarm, which is precisely the artefact a
+clinician needs to either trust or contest a single alert.
+
+\subsection{Partial dependence: which way does the feature push?}
+
+Importance tells us \emph{how much} a feature matters; partial dependence tells us
+\emph{in which direction}. Sweep one feature across its range, and at each value
+average the model's prediction over every window's real settings of the other eight
+features. The resulting curve is the feature's marginal effect on $P(\text{freeze})$,
+with the rest of the data marginalised out.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.96\linewidth]{partial_dependence}
+\caption{Partial dependence of $P(\text{freeze})$ on the three leading features.
+\textbf{Left:} \code{total\_power} is essentially flat --- the forest uses it for
+\emph{gating} (is the leg moving at all?) more than for direction. \textbf{Centre:}
+\code{jerk\_rms} climbs monotonically; more abrupt acceleration steadily raises the
+freeze probability, exactly matching the physiology of 3--8\,Hz trembling and SHAP's
+verdict. \textbf{Right:} \code{freeze\_power} drifts gently \emph{down} --- on its own,
+once jerk is accounted for, raw freeze-band energy is not independently incriminating.
+The rug marks at the foot of each axis show where the data actually live, a reminder
+to distrust the curve out in the sparse tails.}
+\label{fig:pdp}
+\end{figure}
+
+The monotone \code{jerk\_rms} curve is the satisfying one: it is not merely
+\emph{important}, it points the physically correct way. This is the litmus test of a
+trustworthy model --- not just that it scores well, but that the reasons it scores
+well are the reasons a domain expert would give. A model that achieved the same
+accuracy by riding \code{jerk\_rms} \emph{downward} would be a red flag, however good
+its numbers.
+
+\subsection{The threshold, not the model, sets the trade-off}
+\label{sec:contour}
+
+Interpretability also exposes a trap that pure accuracy hides. Figure~\ref{fig:perm}'s
+footnote reports the same forest at sensitivity 0.12, specificity 0.98 --- it catches
+almost no freezes --- yet the operating point quoted earlier was 0.75 / 0.76. Nothing
+about the \emph{model} changed between those two numbers; only the decision threshold
+$t$ did. The freeze class is rare, so the forest's posterior $P(\text{freeze})$ rarely
+exceeds the naive $t\!=\!0.5$, and a half-line classifier therefore says ``calm''
+almost always --- high specificity, near-blind sensitivity.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.8\linewidth]{decision_contour}
+\caption{The forest's posterior $P(\text{freeze})$ shaded over its two most telling
+features, with real windows overlaid (red = freeze, grey = no-freeze). The
+\textbf{dashed} contour is the naive $t\!=\!0.5$ boundary: it walls off only a tiny
+high-jerk corner, abandoning most red points --- this is the sensitivity-0.12 detector.
+The \textbf{solid green} contour is the deployed $t\!\approx\!0.10$ boundary, which
+sweeps far lower and reclaims the freeze cluster strung along high \code{jerk\_rms}.
+Same model, same plot --- moving one number transforms a timid detector into a
+balanced one.}
+\label{fig:contour}
+\end{figure}
+
+\begin{takeaway}
+For a rare, high-cost event, the operating threshold \emph{is} a design decision, not a
+default. A missed freeze can mean a fall, so both the forest ($t^\star\!\approx\!0.10$)
+and the shipped $\FI$ detector ($t\!=\!1.815$, below the Youden-optimal 2.10) are
+deliberately biased toward sensitivity --- and being able to \emph{see} that choice in
+Fig.~\ref{fig:contour} is itself an argument for glass boxes.
+\end{takeaway}
+
+\subsection{Why Cadence ships the Freeze Index, not a black box}
+
+The forest is interpretable; the $\FI$ detector is interpretable \emph{and}
+already on the ankle. Three clinical reasons settle the choice.
+
+\begin{description}[leftmargin=1.6em,style=nextline]
+\item[Trust.] A person is being told something about their own falls. ``You froze
+because your 3--8\,Hz energy was $1.8\times$ your walking energy'' is a sentence a
+patient and a clinician can both check; ``the network's logit crossed zero'' is not.
+Every Cadence verdict on the dashboard --- the Freeze Margin meter, the raw $\FI$, the
+energy gate --- traces back to one printed equation.
+\item[Debuggability.] When the $\FI$ detector misfires we can point at the exact cause
+--- the gate let through a still-leg artefact, or the window straddled a freeze
+boundary and diluted it --- and fix that line. A misfiring CNN offers 18\,k weights and
+a shrug. (Indeed, the design lesson that per-axis band-pass filtering \emph{before}
+magnitude flattens the $\FI$ ratio was found precisely because the pipeline was
+transparent enough to inspect.)
+\item[Footprint and honesty.] The $\FI$ is two band-power sums and a ratio, well
+inside the SAMD21's budget, and it runs untethered with no training set to drift away
+from. The forest and CNN are research instruments that \emph{justify} and stress-test
+the shipped rule; the rule itself is what a clinician can audit at the bedside.
+\end{description}
+
+\begin{keyidea}
+Interpretability is not a consolation prize for a weaker model --- it is the headline
+feature of a medical wearable. Cadence treats the CNN and RandomForest as
+\emph{evidence} that its simple, transparent Freeze Index is sound, then ships the box
+everyone can see straight through.
+\end{keyidea}

@@ -1,0 +1,337 @@
+\section{Real-Time Windowing}
+\label{sec:windowing}
+
+The accelerometer never stops: at \SI{64}{Hz} it hands Cadence a fresh triple of
+$(a_x,a_y,a_z)$ samples roughly every \SI{16}{ms}, indefinitely. A freeze, by
+contrast, is an \emph{event} with duration --- a few seconds of \SIrange{3}{8}{Hz}
+trembling. To bridge that gap, the firmware does not classify single samples. It
+slices the unending stream into short, overlapping \emph{windows}, computes one
+spectral verdict per window, and slides forward. This section is about the geometry
+of that slicing: how wide each window is, how far it steps, what that buys us, and
+what it quietly costs.
+
+\begin{intuition}
+You cannot hear a chord from a single piano key struck for one millisecond --- you
+need to listen for a beat or two to tell which notes are sounding. The freeze
+signature is a ``chord'' in the \SIrange{3}{8}{Hz} band. Cadence listens in
+\SI{4}{s} chunks, and starts a fresh chunk every \SI{2}{s}, so a new opinion arrives
+twice a second while each opinion still rests on enough signal to be trustworthy.
+\end{intuition}
+
+\subsection{The streaming geometry}
+
+Two integers fix everything. The \textbf{window length} is $N=256$ samples; at
+$f_s=\SI{64}{Hz}$ that is exactly
+\[
+  T_{\text{win}} \;=\; \frac{N}{f_s} \;=\; \frac{256}{64} \;=\; \SI{4.0}{s}.
+\]
+The \textbf{hop} (how far the window advances between decisions) is $H=128$ samples,
+i.e.\ \SI{2.0}{s}. Because $H = N/2$, consecutive windows share exactly half their
+samples --- a \textbf{50\% overlap} --- and a fresh window closes, and therefore a
+fresh freeze decision is emitted, every
+\[
+  T_{\text{hop}} \;=\; \frac{H}{f_s} \;=\; \frac{128}{64} \;=\; \SI{2.0}{s}.
+\]
+
+\begin{keyidea}
+Window length sets \emph{how much signal each decision sees}; hop sets \emph{how
+often a decision is made}. They are independent knobs. Cadence deliberately decouples
+them: a long \SI{4}{s} window for spectral quality, but a short \SI{2}{s} hop so the
+monitor still feels responsive. Overlap is simply the by-product, $1-H/N = 50\%$.
+\end{keyidea}
+
+Figure~\ref{fig:win-timeline} draws the geometry directly. Each bar is one \SI{4}{s}
+analysis window; each window is shifted \SI{2}{s} to the right of the one before, so
+its leading half is brand-new signal and its trailing half was already seen by its
+predecessor. Reading down any vertical line tells you how many windows a given
+instant of the stream participates in --- in steady state, every sample is examined
+by exactly two windows.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.95\textwidth}{!}{%
+\begin{tikzpicture}[font=\small]
+  % ---- parameters: 1 s = 0.9 cm on the x-axis ----
+  \def\sx{0.9}     % cm per second
+  \def\wid{4}      % window width in seconds
+  \def\hop{2}      % hop in seconds
+
+  % ---- timeline axis ----
+  \draw[->,thick,ink] (0,0) -- ({16.8*\sx},0) node[right]{\,$t$\,(s)};
+  \foreach \t in {0,2,4,6,8,10,12,14,16}{
+    \draw[ink] ({\t*\sx},0.06) -- ({\t*\sx},-0.06);
+    \node[below,ink,font=\footnotesize] at ({\t*\sx},-0.10) {\t};
+  }
+
+  % ---- five overlapping windows, stacked upward ----
+  \def\wha{0.46}   % half-height of each window bar
+  \def\gap{1.18}   % vertical centre-to-centre spacing
+  \foreach \k [count=\i from 1] in {0,2,4,6,8}{
+    \pgfmathsetmacro{\yc}{1.05 + \k/2*\gap}     % vertical centre of window i
+    \pgfmathsetmacro{\xl}{\k*\sx}               % left edge (s -> cm)
+    \pgfmathsetmacro{\xr}{(\k+\wid)*\sx}        % right edge
+    \pgfmathsetmacro{\xm}{(\k+\hop)*\sx}        % overlap boundary (new vs reused)
+    % reused (overlap) half — pale
+    \filldraw[fill=palenavy,draw=navy,line width=0.5pt,rounded corners=1pt]
+      (\xl,{\yc-\wha}) rectangle (\xm,{\yc+\wha});
+    % fresh half — teal tint
+    \filldraw[fill=paleteal,draw=teal,line width=0.5pt,rounded corners=1pt]
+      (\xm,{\yc-\wha}) rectangle (\xr,{\yc+\wha});
+    \node[ink,font=\footnotesize] at ({(\xl+\xr)/2},\yc)
+      {window $w_{\i}$ \;[\SI{4}{s}, $N{=}256$]};
+    % a decision is emitted when the window closes (its right edge)
+    \draw[freeze,line width=0.7pt,-{Stealth[length=4pt]}]
+      (\xr,{\yc-\wha}) -- ({\xr},0.18);
+    \node[freeze,font=\scriptsize,fill=white,inner sep=0.5pt]
+      at ({\xr+0.0},0.40) {decision};
+  }
+
+  % ---- hop bracket between w1 and w2 left edges ----
+  \draw[decorate,decoration={brace,amplitude=4pt,mirror},steel,line width=0.6pt]
+    (0,0.50) -- ({\hop*\sx},0.50);
+  \node[steel,font=\footnotesize,fill=white,inner sep=1pt]
+    at ({\hop*\sx/2},0.66) {hop $H=128$ (\SI{2}{s})};
+
+  % ---- legend (placed clear of the windows, lower-right) ----
+  \begin{scope}[shift={({12.6*\sx},{1.05+1.0*\gap})}]
+    \filldraw[fill=paleteal,draw=teal,line width=0.5pt] (0,0) rectangle (0.34,0.30);
+    \node[right,ink,font=\footnotesize] at (0.40,0.15) {fresh \SI{2}{s}};
+    \node[right,ink,font=\footnotesize] at (0.40,-0.20) {(new signal)};
+    \filldraw[fill=palenavy,draw=navy,line width=0.5pt] (0,-0.85) rectangle (0.34,-0.55);
+    \node[right,ink,font=\footnotesize] at (0.40,-0.70) {reused \SI{2}{s}};
+    \node[right,ink,font=\footnotesize] at (0.40,-1.05) {(overlap)};
+  \end{scope}
+\end{tikzpicture}}
+\caption{Sliding-window timeline. Each \SI{4}{s} ($N{=}256$) analysis window steps
+\SI{2}{s} ($H{=}128$) to the right of the one before, so half of every window is new
+signal (teal) and half is carried over from its predecessor (navy). A freeze decision
+(red arrow) is emitted each time a window closes --- a fresh verdict every \SI{2}{s}.
+In steady state every sample is seen by exactly two windows.}
+\label{fig:win-timeline}
+\end{figure}
+
+\begin{lstlisting}[style=py]
+# Streaming geometry, in software (fog.streaming, schematic)
+N, H = 256, 128                 # window = 4 s, hop = 2 s  @ 64 Hz
+ring = RingBuffer(capacity=N)   # holds the most recent 4 s of samples
+for sample in accel_stream():   # 64 new samples per second
+    ring.push(sample)
+    if ring.advanced_by(H):     # a full 2 s of fresh data has arrived
+        window = ring.last(N)   # newest 256 samples (50% overlap with previous)
+        verdict = classify(window)   # gate -> freeze index -> debounce
+        emit(verdict)           # one decision every 2 s
+\end{lstlisting}
+
+\subsection{Why \SI{4}{s}? Spectral resolution versus latency}
+
+The window length is not a free choice --- it is dictated by the physics of the
+signal we are trying to resolve. The freeze band, \SIrange{3}{8}{Hz}, must be
+separated cleanly from the locomotor band, \SIrange{0.5}{3}{Hz}, sitting right
+beside it. A Welch periodogram over $N$ samples places its frequency estimates on a
+grid whose spacing is
+\[
+  \Delta f \;=\; \frac{f_s}{N} \;=\; \frac{64}{256} \;=\; \SI{0.25}{Hz}.
+\]
+At \SI{0.25}{Hz} per bin the \SIrange{3}{8}{Hz} freeze band is covered by roughly
+twenty bins and the \SIrange{0.5}{3}{Hz} walking band by ten --- ample resolution to
+add up each band's power independently and form the freeze index as their ratio.
+
+\begin{mathsbox}
+$\Delta f = f_s/N$ is the single most important line in this section. The bin spacing
+is \emph{inversely} proportional to window length: double the samples, halve the bin
+width, sharpen the spectrum. A short \SI{1}{s} window ($N=64$) would give
+$\Delta f = \SI{1}{Hz}$ --- so coarse that the \SIrange{3}{8}{Hz} freeze band would
+collapse into a handful of fat bins and start to smear into the walking band beneath
+it. The \SI{4}{s} window is the smallest that resolves the two bands cleanly.
+\end{mathsbox}
+
+There is a price. A longer window means each decision is an \emph{average} over more
+time, so it reacts more slowly and blurs together whatever happened across its
+\SI{4}{s} span. This is the classic resolution--latency trade-off, summarised in
+Table~\ref{tab:tradeoff}.
+
+\begin{table}[H]
+\centering
+\caption{The window-length trade-off. Cadence sits at $N=256$ (bold row): the
+shortest window that still resolves the freeze band, paired with a half-window hop so
+decisions still arrive twice a second.}
+\label{tab:tradeoff}
+\small
+\begin{tabular}{@{}lcccl@{}}
+\toprule
+Window $N$ & $T_{\text{win}}$ & $\Delta f = f_s/N$ & Freeze-band bins & Character \\
+\midrule
+64  & \SI{1}{s} & \SI{1.0}{Hz}  & $\sim$5  & fast, but bands smear together \\
+128 & \SI{2}{s} & \SI{0.5}{Hz}  & $\sim$10 & marginal resolution \\
+\textbf{256} & \textbf{\SI{4}{s}} & \textbf{\SI{0.25}{Hz}} & \textbf{$\sim$20} & \textbf{\textcolor{amber}{Cadence: clean bands, responsive}} \\
+512 & \SI{8}{s} & \SI{0.125}{Hz} & $\sim$40 & sharp, but sluggish and over-smoothed \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{intuition}
+Resolution and latency pull in opposite directions. A wide window is a
+\emph{telephoto lens} on frequency --- it sees the \SIrange{3}{8}{Hz} band in sharp
+detail but takes a long exposure, so fast changes blur. A narrow window is a
+\emph{snapshot} --- quick, but the frequency picture is grainy. Because a freeze
+lasts \emph{seconds}, a \SI{4}{s} exposure is well matched to the event itself: long
+enough to be sharp, short enough not to miss the episode.
+\end{intuition}
+
+The hop rescues the responsiveness that the long window would otherwise cost us.
+Even though each window spans \SI{4}{s}, stepping by only \SI{2}{s} means the latest
+decision is never more than \SI{2}{s} old. Overlap is therefore not wasteful
+redundancy --- it is what lets a slow-exposure window still produce a fast-updating
+verdict. Figure~\ref{fig:capture1} shows this on a real worksheet capture: the freeze
+index does not vary smoothly but jumps in a \emph{staircase}, one tread every
+\SI{2}{s}, each tread being the verdict of one closed window. The index climbs hard
+($>20$) only while the foot is trembling in place during the freeze phase, and the
+\SI{2}{s} cadence of the steps is exactly the hop drawn in
+Figure~\ref{fig:win-timeline}.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.86\linewidth]{capture1_trace}
+\caption{Real worksheet capture (\code{capture1.csv}, \SI{64}{Hz}, \SI{41.4}{s}).
+\emph{Top:} accelerometer magnitude $\norm{a}$, with the freeze phase showing the
+tell-tale large-amplitude \SIrange{3}{8}{Hz} trembling. \emph{Bottom:} the freeze
+index. Note that it updates as a \emph{staircase} --- one new tread every \SI{2}{s}
+hop, each tread the verdict of one \SI{4}{s} window --- and spikes above 20 only
+during the freeze, where the worksheet records a mean FI of $6.89$ and a max of
+$21.35$.}
+\label{fig:capture1}
+\end{figure}
+
+\subsection{The ring buffer}
+
+Holding ``the most recent \SI{4}{s}'' on a SAMD21 with kilobytes of RAM rules out
+ever copying the stream. Cadence uses a \textbf{ring (circular) buffer}: a fixed
+array of $N=256$ slots and a write pointer that wraps around to the start when it
+reaches the end. Each new sample overwrites the oldest one in $O(1)$ time, with no
+shifting and no allocation. A counter tracks how many fresh samples have landed
+since the last decision; the moment it reaches the hop $H=128$, the firmware reads
+off the newest 256 slots as the current window and resets the counter.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.80\textwidth}{!}{%
+\begin{tikzpicture}[font=\small]
+  \def\R{2.05}
+  % ring of slots
+  \draw[line width=10pt,rule] (0,0) circle (\R);
+  % "fresh" arc (newest 128) in teal, "older" arc in navy
+  \draw[line width=10pt,teal] (0,0) ++(90:\R) arc (90:-90:\R);
+  \draw[line width=10pt,navy!70] (0,0) ++(90:\R) arc (90:270:\R);
+  % write pointer
+  \draw[-{Stealth[length=6pt]},freeze,line width=1.3pt] (0,0) -- (88:\R*0.92);
+  \node[freeze,font=\footnotesize] at (55:\R*0.50) {write ptr};
+  % wrap arrow
+  \draw[-{Stealth[length=5pt]},ink,line width=0.8pt]
+    (102:\R*1.20) arc (102:78:\R*1.20);
+  \node[ink,font=\scriptsize,align=center] at (90:\R*1.42)
+    {newest sample\\overwrites oldest};
+  % leader lines + labels for the two halves (placed well clear of the 10pt ring)
+  \draw[teal,line width=0.5pt] (0:\R*1.08) -- (0:\R*1.30);
+  \node[teal,font=\footnotesize,align=left,anchor=west] at (0:\R*1.34)
+    {freshest \SI{2}{s}\\(128 slots)};
+  \draw[navy,line width=0.5pt] (180:\R*1.08) -- (180:\R*1.30);
+  \node[navy,font=\footnotesize,align=right,anchor=east] at (180:\R*1.34)
+    {previous \SI{2}{s}\\(reused next hop)};
+  % centre annotation
+  \node[ink,font=\footnotesize,align=center] at (0,-0.05)
+    {256 slots\\$=\SI{4}{s}$\\ at \SI{64}{Hz}};
+\end{tikzpicture}}
+\caption{The ring buffer holds exactly $N=256$ samples (\SI{4}{s}). The write pointer
+advances one slot per sample and wraps at the end, overwriting the oldest value in
+constant time. After $H=128$ new samples arrive (the freshest \SI{2}{s}, teal), the
+firmware reads the full ring as the current window and emits a decision; the older
+half (navy) is reused as the overlap of the next window.}
+\label{fig:ring}
+\end{figure}
+
+\subsection{The cost of windowing: dilution at the edges}
+
+Windowing is not free of blind spots, and honesty about them is part of the design.
+Because every verdict is a \SI{4}{s} average, a freeze that is \emph{short} relative
+to the window, or that is \emph{split} across a window boundary, can be diluted below
+the detection threshold and missed.
+
+\begin{itemize}
+  \item \textbf{Too short.} The freeze index is $\FI = \text{power}(3\text{--}8)/
+        \text{power}(0.5\text{--}3)$ computed over the whole \SI{4}{s} window. If a
+        freeze occupies only, say, \SI{1}{s} of that window, the trembling energy is
+        averaged together with \SI{3}{s} of calmer signal, pulling the ratio down ---
+        possibly below the deployed trip line of $1.815$.
+  \item \textbf{Split across a boundary.} A freeze straddling the seam between two
+        windows contributes part of its energy to each. Neither window contains the
+        whole episode, so each sees a watered-down version, and both can fall short.
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\resizebox{0.95\textwidth}{!}{%
+\begin{tikzpicture}[font=\small]
+  \def\sx{0.95}
+  % timeline
+  \draw[->,thick,ink] (0,0) -- ({13.2*\sx},0) node[right]{\,$t$\,(s)};
+  \foreach \t in {0,2,4,6,8,10,12}{
+    \draw[ink] ({\t*\sx},0.05) -- ({\t*\sx},-0.05);
+    \node[below,ink,font=\footnotesize] at ({\t*\sx},-0.08){\t};
+  }
+  % --- case A: well-captured freeze (top) ---
+  \node[ink,font=\footnotesize,anchor=west] at ({0.1*\sx},3.55)
+    {\textbf{Captured:} freeze fills a window $\Rightarrow$ FI high};
+  \filldraw[fill=palefreeze,draw=freeze,line width=0.6pt]
+    ({2*\sx},2.9) rectangle ({6*\sx},3.35);
+  \node[freeze,font=\footnotesize] at ({4*\sx},3.125) {freeze ($\sim$\SI{4}{s})};
+  \filldraw[fill=paleteal,draw=teal,line width=0.6pt,rounded corners=1pt]
+    ({2*\sx},2.45) rectangle ({6*\sx},2.78);
+  \node[teal,font=\scriptsize] at ({4*\sx},2.615) {window aligns};
+  \node[grn,font=\footnotesize] at ({8.4*\sx},2.78) {$\FI \uparrow$ detected};
+  % --- case B: too-short freeze (middle) ---
+  \node[ink,font=\footnotesize,anchor=west] at ({0.1*\sx},1.85)
+    {\textbf{Diluted (too short):} \SI{1}{s} freeze in a \SI{4}{s} window};
+  \filldraw[fill=palefreeze,draw=freeze,line width=0.6pt]
+    ({4.5*\sx},1.2) rectangle ({5.5*\sx},1.62);
+  \node[freeze,font=\scriptsize] at ({5*\sx},0.98) {\SI{1}{s}};
+  \filldraw[fill=mist,draw=mute,line width=0.6pt,rounded corners=1pt]
+    ({3*\sx},0.62) rectangle ({7*\sx},0.93);
+  \node[mute,font=\scriptsize] at ({4*\sx},0.775) {3 s calm averaged in};
+  \node[freeze,font=\footnotesize] at ({9.0*\sx},0.93) {$\FI$ pulled below trip};
+  % --- case C: split across boundary (bottom) ---
+  \node[ink,font=\footnotesize,anchor=west] at ({0.1*\sx},-0.6)
+    {\textbf{Diluted (split):} freeze straddles two windows};
+  \filldraw[fill=palefreeze,draw=freeze,line width=0.6pt]
+    ({4*\sx},-1.25) rectangle ({8*\sx},-0.83);
+  \node[freeze,font=\scriptsize] at ({6*\sx},-1.04) {freeze across the seam};
+  \filldraw[fill=paleteal,draw=teal,line width=0.6pt,rounded corners=1pt]
+    ({2*\sx},-1.88) rectangle ({6*\sx},-1.57);
+  \node[teal,font=\scriptsize] at ({3.4*\sx},-1.725) {window $k$};
+  \filldraw[fill=palenavy,draw=navy,line width=0.6pt,rounded corners=1pt]
+    ({6*\sx},-2.30) rectangle ({10*\sx},-1.99);
+  \node[navy,font=\scriptsize] at ({8.6*\sx},-2.145) {window $k{+}1$};
+  \draw[freeze,dashed,line width=0.7pt] ({6*\sx},-0.78) -- ({6*\sx},-2.34);
+  \node[freeze,font=\scriptsize,fill=white,inner sep=1pt] at ({6*\sx},-2.55) {seam};
+\end{tikzpicture}}
+\caption{When windowing dilutes a freeze. \emph{Top:} a freeze that fills a window
+drives the freeze index well above the trip line and is caught. \emph{Middle:} a
+sub-window (\SI{1}{s}) freeze is averaged together with \SI{3}{s} of calm signal,
+pulling the ratio down. \emph{Bottom:} a freeze split across the seam between two
+windows donates half its energy to each, so neither window sees the full episode.}
+\label{fig:dilution}
+\end{figure}
+
+The \SI{2}{s} hop is the first line of defence here: a freeze missed by one window's
+alignment is examined again, \SI{2}{s} later, by the next window --- whose seam falls
+in a different place. Overlap thus gives every episode multiple looks. The second
+line of defence is downstream: the deployed trip line is biased low ($1.815$ rather
+than the Youden-optimal $2.10$), precisely so that a partially-diluted freeze still
+clears the bar. The clinical logic is asymmetric --- a missed freeze can mean a fall,
+whereas a false alarm merely lights an LED.
+
+\begin{takeaway}
+\SI{4}{s} windows give the spectral resolution to separate the \SIrange{3}{8}{Hz}
+freeze band; a \SI{2}{s} half-window hop gives a fresh verdict twice a second and a
+second look at any episode a single window might dilute. Long enough to see the
+freeze, fast enough to report it.
+\end{takeaway}

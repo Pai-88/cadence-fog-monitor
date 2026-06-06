@@ -1,0 +1,273 @@
+\section{Aim \& Clinical Motivation}
+\label{sec:aim}
+
+Parkinson's disease (PD) is a progressive disorder of the brain's movement-control
+circuitry. As the dopamine-producing neurons of the \emph{substantia nigra} die off,
+the messages that normally let movement flow smoothly become noisy and unreliable.
+The familiar outward signs --- a resting tremor, stiffness, and a general slowing of
+movement --- are only part of the picture. For many people in the middle and later
+stages of the disease, the most frightening symptom is one that the textbook
+descriptions barely capture: their feet simply stop.
+
+\subsection{Freeze of gait: feet glued to the floor}
+
+\emph{Freeze of gait} (FoG) is a sudden, brief inability to take the next step. People
+who live with it describe the sensation vividly --- as though their feet have been
+\emph{glued to the floor} --- even while the upper body still wants to move forward.
+The intention to walk is intact; the legs will not answer. Episodes are typically
+short, lasting only seconds, and they are often triggered by exactly the moments where
+a person most needs their feet: turning around, stepping through a narrow doorway,
+starting to walk from standing, or approaching a chair.
+
+A crucial and counter-intuitive detail is that a freeze is \emph{not} the same as
+standing still. During a freeze the feet are usually trembling and shuffling rapidly
+\emph{in place} --- a fast, small-amplitude tremor of roughly \SI{3}{}--\SI{8}{\hertz}
+--- while the body fails to make forward progress. This rapid trembling-in-place is
+the tell-tale mechanical signature that an instrument can latch onto, and it is what
+distinguishes a genuine freeze from someone calmly waiting at a kerb. It is also the
+single most important fact behind every design decision in this report.
+
+\begin{intuition}
+A freeze is not a pause. When you stand at rest, your feet are quiet. During a freeze
+the feet are \emph{busy} --- buzzing in place at \SI{3}{}--\SI{8}{\hertz} --- yet you
+go nowhere. ``Quiet feet, no progress'' is rest; ``busy feet, no progress'' is a
+freeze. That contrast is exactly what an ankle accelerometer can hear.
+\end{intuition}
+
+\paragraph{Why it is dangerous.} Freezing is one of the leading causes of falls in
+Parkinson's disease. When the feet stop but the body's momentum does not, the person
+pitches forward with nothing to catch them. The consequences cascade far beyond the
+fall itself. A single fracture can mean surgery, a long recovery, and a lasting loss
+of confidence; the fear of the \emph{next} fall then shrinks a person's world. Many
+people respond by walking less, going out less, and leaning more heavily on carers ---
+so freezing quietly erodes the very independence that mobility represents. Because
+episodes are brief and unpredictable, they are also hard to capture in a clinic: a
+patient may walk perfectly down a corridor for a neurologist and freeze repeatedly at
+home an hour later. What the clinician needs, and rarely gets, is an honest record of
+\emph{when} and \emph{how often} freezing actually happens during ordinary life.
+
+\begin{keyidea}
+Freezing is brief, unpredictable, and hard to reproduce on demand --- which is exactly
+why a short clinic visit underestimates it. The clinical value of a wearable is not
+that it does anything clever in the moment; it is that it watches \emph{continuously}
+and turns scattered, invisible episodes into a record a clinician can act on.
+\end{keyidea}
+
+\subsection{Why a cheap, continuous wearable matters}
+
+If freezing only mattered in the consulting room, an expensive lab gait mat would be
+enough. But freezing happens at home, in the supermarket, in the doorway at night ---
+precisely where no instrument is watching. A wearable changes that arithmetic. It is
+worn all day, it costs little, and it converts a symptom that is otherwise reported
+from fading memory into objective, time-stamped data. A low-cost device can be given to
+many patients at once; a continuous one captures the rare episodes that a snapshot
+misses. Together, ``cheap'' and ``continuous'' are what make population-scale, real-life
+freeze monitoring realistic rather than aspirational.
+
+\subsection{Cadence: the aim, stated precisely}
+
+\textbf{Cadence} is a low-cost, ankle-worn wearable whose aim is narrow and deliberate:
+to \emph{faithfully detect} freeze-of-gait episodes from a \emph{single ankle
+accelerometer}, and to \emph{intuitively display} them --- on the device itself and on a
+live dashboard --- so that the person and their clinician can see when freezing happened.
+It is built on an Adafruit Circuit Playground Express, worn in a soft ankle sleeve, and
+it does its sensing and decision-making from the three axes of one tiny accelerometer.
+Two verbs carry the whole project: \emph{detect} and \emph{display}.
+
+\begin{takeaway}
+Cadence has exactly one job: to \emph{watch} the ankle, recognise the
+\SI{3}{}--\SI{8}{\hertz} signature of a freeze, and \emph{show} it clearly. Detect, and
+display --- nothing more.
+\end{takeaway}
+
+\subsection{A monitor, not a therapy}
+
+This positioning must be crisp, because it is easy to get wrong. There is a well-known
+class of Parkinson's aids called \emph{cueing therapies}: devices that, when they sense
+a freeze, fire a stimulus --- a rhythmic buzz, a beep, a flash --- to help the person
+break out of it and step again. Cueing is an \emph{intervention}: it acts \emph{on} the
+patient in the moment.
+
+\textbf{Cadence is not one of these.} It is a \emph{monitor}. Its purpose is to observe
+and record freezing faithfully, not to interrupt or treat it. A coin vibration motor is
+physically fitted to the board, but it is \emph{deliberately disabled in firmware}: the
+hardware exists, but no firmware path ever drives it. When Cadence recognises a freeze it
+\emph{reports} that fact --- on an OLED screen, on the onboard NeoPixel LED ring, and on
+a live web dashboard --- and it does \emph{not} buzz, cue, or otherwise act on the wearer.
+The distinction between observing and intervening is the line Cadence is careful never to
+cross. Table~\ref{tab:monitor-vs-cue} makes the contrast explicit.
+
+\begin{table}[H]
+\centering
+\caption{Cadence is a monitor, not a cueing therapy. The two aim at different goals and
+are evaluated by different yardsticks.}
+\label{tab:monitor-vs-cue}
+\small
+\begin{tabular}{@{}p{0.30\linewidth} p{0.31\linewidth} p{0.31\linewidth}@{}}
+\toprule
+ & \textbf{Cueing therapy} & \textbf{Cadence (monitor)} \\
+\midrule
+Goal            & Help end a freeze \emph{now} & Record \emph{when} freezes happen \\
+Acts on patient & Yes --- fires a cue          & No --- only reports \\
+On a freeze     & Buzz / beep / flash to cue   & Show on OLED + LEDs + dashboard \\
+Coin motor      & Driven                       & Fitted but \emph{disabled} \\
+Success means    & Patient steps again          & Faithful, honest detection \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{What a freeze looks like in the data}
+
+Before diving into signal processing in later sections, it helps to see, once, what
+Cadence is actually looking at. Figure~\ref{fig:gaitstrip} sketches the canonical
+sequence Cadence is built to follow: a calm \emph{still} period, ordinary \emph{walking},
+a sudden \emph{freeze}, and a return to walking. The accelerometer trace tells the story
+in amplitude alone --- the freeze is the burst of fast, jagged activity sandwiched
+between two stretches of smoother motion.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}[font=\sffamily]
+
+% ---- geometry ----
+\def\H{2.6}      % strip height
+\def\W{15.2}     % total width
+% phase boundaries (x positions)
+\def\xa{0}       % start
+\def\xb{3.6}     % still -> walk
+\def\xc{7.6}     % walk -> freeze
+\def\xd{10.4}    % freeze -> walk
+\def\xe{15.2}    % end
+
+% ---- coloured phase bands ----
+\fill[palenavy]   (\xa,0) rectangle (\xb,\H);
+\fill[paleteal]   (\xb,0) rectangle (\xc,\H);
+\fill[palefreeze] (\xc,0) rectangle (\xd,\H);
+\fill[paleteal]   (\xd,0) rectangle (\xe,\H);
+\draw[rule,line width=0.4pt] (\xa,0) rectangle (\xe,\H);
+
+% baseline (mean) for the trace
+\def\mid{1.3}
+
+% ---- STILL: tiny quiet noise ----
+\draw[ink,line width=0.9pt]
+  (\xa,\mid)
+  (0.20,1.34) -- (0.55,1.27) -- (0.90,1.33) -- (1.25,1.28) -- (1.60,1.32)
+  -- (1.95,1.27) -- (2.30,1.33) -- (2.65,1.28) -- (3.00,1.32) -- (3.35,1.29)
+  -- (\xb,1.30);
+
+% ---- WALK: smooth, moderate oscillation (heel strikes) ----
+\draw[grn,line width=1.0pt]
+  (\xb,\mid)
+  -- (3.95,1.78) -- (4.30,0.86) -- (4.65,1.80) -- (5.00,0.84)
+  -- (5.35,1.79) -- (5.70,0.85) -- (6.05,1.80) -- (6.40,0.84)
+  -- (6.75,1.79) -- (7.10,0.86) -- (7.45,1.55) -- (\xc,1.30);
+
+% ---- FREEZE: fast, large, jagged trembling in place ----
+% (upper peaks held below ~2.05 so the FREEZE label above stays legible;
+%  still clearly the tallest, most jagged trace — walking peaks at 1.80)
+\draw[freeze,line width=1.0pt]
+  (\xc,\mid)
+  -- (7.78,1.98) -- (7.96,0.45) -- (8.14,2.04) -- (8.32,0.38)
+  -- (8.50,2.06) -- (8.68,0.35) -- (8.86,2.06) -- (9.04,0.36)
+  -- (9.22,2.05) -- (9.40,0.38) -- (9.58,2.04) -- (9.76,0.42)
+  -- (9.94,2.00) -- (10.12,0.55) -- (\xd,1.30);
+
+% ---- WALK again ----
+\draw[grn,line width=1.0pt]
+  (\xd,\mid)
+  -- (10.78,1.78) -- (11.13,0.86) -- (11.48,1.80) -- (11.83,0.84)
+  -- (12.18,1.79) -- (12.53,0.85) -- (12.88,1.80) -- (13.23,0.84)
+  -- (13.58,1.79) -- (13.93,0.85) -- (14.28,1.80) -- (14.63,0.86)
+  -- (14.98,1.55) -- (\xe,1.30);
+
+% ---- phase labels (top) ----
+\node[anchor=north,navy,font=\bfseries] at ({(\xa+\xb)/2},\H-0.08) {STILL};
+\node[anchor=north,teal,font=\bfseries] at ({(\xb+\xc)/2},\H-0.08) {WALKING};
+\node[anchor=north,freeze,font=\bfseries] at ({(\xc+\xd)/2},\H-0.08) {FREEZE};
+\node[anchor=north,teal,font=\bfseries] at ({(\xd+\xe)/2},\H-0.08) {WALKING};
+
+% ---- descriptive sub-labels (bottom, inside) ----
+\node[anchor=south,mute,font=\scriptsize] at ({(\xa+\xb)/2},0.10) {quiet feet};
+\node[anchor=south,mute,font=\scriptsize] at ({(\xb+\xc)/2},0.10) {steady heel strikes};
+\node[anchor=south,freeze,font=\scriptsize\bfseries] at ({(\xc+\xd)/2},0.10) {trembling in place 3--8\,Hz};
+\node[anchor=south,mute,font=\scriptsize] at ({(\xd+\xe)/2},0.10) {steady heel strikes};
+
+% ---- y-axis hint ----
+\node[anchor=east,mute,font=\scriptsize,rotate=90] at (-0.30,\H/2)
+  {ankle $\norm{a}$};
+
+% ---- time arrow under the strip ----
+\draw[-{Latex[length=3mm]},mute,line width=0.8pt]
+  (\xa,-0.55) -- (\xe,-0.55);
+\node[anchor=west,mute,font=\scriptsize] at (\xe,-0.55) {time};
+
+% ---- annotation bracket over the freeze ----
+\draw[decorate,decoration={brace,amplitude=5pt,mirror},freeze,line width=0.7pt]
+  (\xc,-0.18) -- (\xd,-0.18);
+\node[anchor=north,freeze,font=\scriptsize\itshape] at ({(\xc+\xd)/2},-0.30)
+  {what Cadence must catch};
+
+\end{tikzpicture}}
+\caption{The canonical gait sequence Cadence is built to follow.\ Calm \emph{still}
+periods and ordinary \emph{walking} both produce orderly traces; a \emph{freeze} appears
+as a burst of fast, large-amplitude trembling ``in place'' before walking resumes.\ The
+red episode --- not the quiet stretches --- is what the device must detect.}
+\label{fig:gaitstrip}
+\end{figure}
+
+That schematic is not just an illustration; it matches what the hardware actually
+records. Figure~\ref{fig:fiperphase} shows the central decision quantity --- the
+\emph{Freeze Index}, the ratio of fast (\SI{3}{}--\SI{8}{\hertz}) to slow
+(\SI{0.5}{}--\SI{3}{\hertz}) energy in the ankle signal --- measured on a real worksheet
+capture that runs through exactly this still\,$\rightarrow$\,walk\,$\rightarrow$\,freeze\,$\rightarrow$\,walk
+sequence. Standing still and ordinary walking both sit around a Freeze Index of roughly
+$1.1$ and $1.2$; the freeze phase leaps to a mean of $6.89$, far above the deployed
+trip line of $1.815$. The full mechanics of how that index is computed, thresholded, and
+debounced are the subject of later sections; here it is enough to see that the freeze
+genuinely stands apart from everything around it.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\linewidth]{fi_per_phase}
+\caption{Real Freeze Index per phase on the worksheet capture (\code{capture1}, \SI{64}{\hertz},
+\SI{41.4}{\second}).\ Still and walking phases stay near $1.1$--$1.2$; the freeze phase
+jumps to a mean of $6.89$, well clear of the deployed threshold of $1.815$ (dashed).\ The
+ordered gait sequence of Figure~\ref{fig:gaitstrip} is visible directly in the data.}
+\label{fig:fiperphase}
+\end{figure}
+
+\begin{keyidea}
+The freeze does not hide. On real data the Freeze Index of a freeze ($\approx 6.9$) is
+several times that of still or walking ($\approx 1.1$--$1.2$). Cadence's job is to draw a
+sensible line between them and to report --- never to interfere.
+\end{keyidea}
+
+\subsection{What this report covers}
+
+The remainder of this report follows Cadence from physical signal to clinical readout.
+
+\begin{itemize}
+\item \textbf{Sensing.} The accelerometer, why it is sampled at \SI{64}{\hertz} over
+$\pm\SI{8}{\g}$, and how three axes are fused into one orientation-invariant magnitude.
+\item \textbf{Signal processing.} Welch power spectra, the locomotor / freeze /
+rest-tremor frequency bands, and the Freeze Index that turns a wiggling trace into a
+single number.
+\item \textbf{The shipped detector.} The transparent ``glass-box'' rule --- an energy
+gate, a Freeze-Index threshold, and a debounce filter --- and how its operating point was
+chosen to favour catching freezes.
+\item \textbf{A learned alternative.} \emph{FoGNet}, a small 1-D convolutional network
+explored as a ``given more time'' upgrade, with its honest cross-validated results.
+\item \textbf{Evaluation.} Why sensitivity and specificity, not raw accuracy, are the
+metrics that matter when freezes are rare.
+\item \textbf{Hardware \& software.} The Circuit Playground build, the live dashboard,
+and the firmware that records and displays --- but, by design, never cues.
+\end{itemize}
+
+\begin{takeaway}
+Read the rest of this report through one lens: Cadence is a \emph{faithful witness} to
+freezing, not a treatment for it. Every choice that follows --- sensor, maths, detector,
+display --- serves the single goal of detecting freezes honestly and showing them
+clearly.
+\end{takeaway}

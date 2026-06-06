@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fog"
+version = "1.0.0"
+description = "Freeze-of-gait detection + closed-loop vibrotactile cueing for a Parkinson's gait garment (ENGF0031 Scenario 2)"
+readme = "START_HERE.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["numpy>=1.24", "scipy>=1.10"]   # the torch-free core only
+
+[project.optional-dependencies]
+# Live inference on the laptop: trained CNN + dashboard. The default
+# Wi-Fi-bridge transport uses the stdlib socket; pyserial is only for the legacy
+# --transport serial USB tether, but kept here so that fallback works too.
+inference = ["torch>=2.0", "pyserial>=3.5", "fastapi>=0.110", "uvicorn[standard]>=0.27"]
+# Offline training + analysis in Colab.
+train = ["torch>=2.0", "scikit-learn>=1.3", "pandas>=2.0", "seaborn>=0.13", "optuna>=3.5"]
+# Tests, lint, type-check.
+dev = ["pytest>=8.0", "ruff>=0.4", "mypy>=1.9"]
+
+[tool.setuptools]
+# Only the layered core is an installable package; the deployment scripts
+# (train_fog.py, stream_demo.py, dashboard_server.py, fog_analysis.py) are
+# run-in-place entry points, not library modules.
+packages = ["fog"]
+
+# ── Ruff: lint + import sort ────────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+# colab/ mirrors notebook cells (intentionally terse, multi-statement lines);
+# .venv is the throwaway test interpreter. Neither should be linted.
+extend-exclude = ["colab", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    # Deliberate column alignment of `=` / constants (config.py, the firmware-
+    # mirroring tables, the aligned imports) reads better than PEP 8 spacing here.
+    "E221", "E222", "E241",
+    # `dict(key=value)` keyword form: used throughout for pandas row records and
+    # hyper-parameter configs, where it is clearly more readable than a literal
+    # with quoted keys. The rest of C4 (needless comprehensions etc.) stays on.
+    "C408",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["fog"]
+
+# ── mypy: type-check the core, tolerate untyped third-party stubs ───────────
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true   # torch/scipy/serial/fastapi ship partial stubs
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+# ── pytest ──────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

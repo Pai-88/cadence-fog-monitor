@@ -1,0 +1,329 @@
+\section{The Shipped Detector: Threshold, Gate, Debounce}
+\label{sec:detector}
+
+Everything in the preceding chapters converges on a single, deliberately small
+decision rule. Out of all the spectral machinery, Cadence ships exactly one
+on-board verdict per control window, and that verdict drives the OLED, the
+NeoPixel colour, and the web dashboard. This is the \emph{glass box}: a rule a
+clinician can read in one line and trust. The whole detector is
+
+\begin{equation}
+\textsf{FREEZE} \iff
+\underbrace{(\text{movement energy} > \text{still\_floor})}_{\text{the leg is actually moving}}
+\ \wedge\
+\underbrace{(\FI > \tau)}_{\text{moving like a freeze}},
+\quad\text{then \emph{debounced}.}
+\label{eq:rule}
+\end{equation}
+
+\noindent Three ingredients, in this order: a \textbf{gate} (is the leg moving at
+all?), a \textbf{threshold} on the Freeze Index $\FI$ (is the movement the
+3--8\,Hz tremble of a freeze rather than the swing of a walk?), and a
+\textbf{debounce} (has the new verdict held for long enough to be believed?). The
+deployed trip line is $\tau = 1.815$. The rest of this section explains why each
+piece exists, why $\tau$ is set below the textbook optimum, and how the three
+combine into the STILL\,/\,WALKING\,/\,FREEZE state machine.
+
+\begin{keyidea}
+The detector is not a black box that emits a probability. It is a short Boolean
+sentence over two physically meaningful quantities --- how \emph{hard} the leg is
+moving (movement energy) and how \emph{freeze-like} that motion is ($\FI$). Both
+can be read off the live dashboard, so every verdict is auditable after the fact.
+\end{keyidea}
+
+\subsection{Why a gate comes first: the still-leg problem}
+
+Recall that the Freeze Index is a \emph{ratio} of band powers,
+$\FI = P_{3\text{--}8} / P_{0.5\text{--}3}$. Ratios are scale-invariant, which is
+exactly what we want when comparing a freeze to a walk --- but it is also their
+weakness when there is almost no signal at all. Stand perfectly still and both
+band powers collapse towards the sensor's noise floor. Dividing one small noisy
+number by another small noisy number can produce \emph{any} value, including a
+large one. A motionless leg can therefore manufacture a spurious high $\FI$ out of
+pure electronic hash, and a $\FI$-only detector would cry ``freeze'' at someone
+sitting in a chair.
+
+The fix is a second quantity that is deliberately \emph{not} scale-invariant:
+
+\begin{equation}
+\text{movement energy} \;=\; P_{0.5\text{--}3}\;+\;P_{3\text{--}8},
+\label{eq:energy}
+\end{equation}
+
+\noindent the total band power across the locomotor and freeze bands of the
+mean-removed magnitude. Unlike the ratio, this number reports \emph{how much the
+leg is moving} in absolute terms. A still leg has near-zero movement energy; a
+walking or freezing leg has plenty. The gate is a simple floor on this quantity:
+if movement energy is below \code{still\_floor}, the device declares STILL and
+never even consults the $\FI$.
+
+\begin{mathsbox}
+$\FI$ and movement energy are built from the \emph{same two band powers}, combined
+two different ways:
+\[
+\FI=\frac{P_{3\text{--}8}}{P_{0.5\text{--}3}}\ \ (\text{a \emph{ratio} --- shape}),
+\qquad
+\text{energy}=P_{0.5\text{--}3}+P_{3\text{--}8}\ \ (\text{a \emph{sum} --- size}).
+\]
+The ratio answers \emph{``what kind of motion?''} and the sum answers \emph{``is
+there any motion?''} You need both: shape without size is the still-leg trap;
+size without shape cannot tell a walk from a freeze.
+\end{mathsbox}
+
+\code{still\_floor} is not a magic constant. It is \textbf{auto-calibrated at
+boot}: when the firmware starts, it samples the resting movement energy of the
+ankle for a moment and sets the floor just above that quiet baseline. This adapts
+the gate to the individual sleeve fit, the mounting tightness, and the particular
+board's sensor offsets, so ``still'' means \emph{this} wearer's still, not a
+factory guess.
+
+\begin{intuition}
+Think of the gate as a bouncer at the door. Before anyone asks ``is this person
+dancing or freezing?'' the bouncer first checks ``is this person moving at all?''
+If the leg is parked, the question of \emph{how} it is moving is meaningless ---
+and the noisy $\FI$ that the maths would hand back is simply ignored. On the
+dashboard this is the \textbf{Movement Energy} panel's MOVING\,/\,STILL badge, and
+when it reads STILL the Freeze Margin meter shows ``\,---\,/\,at rest.''
+\end{intuition}
+
+\subsection{The threshold: 1.815 versus the textbook optimum 2.10}
+
+Once the gate confirms the leg is moving, the detector asks whether the motion is
+freeze-shaped by comparing $\FI$ against the trip line $\tau$. Choosing $\tau$ is a
+classic sensitivity/specificity trade-off, and Cadence makes a deliberate,
+clinically-motivated choice that differs from the value a naive optimiser would
+pick.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.86\linewidth]{operating_point}
+\caption{How an operating point is chosen --- a threshold sweep. As the trip line
+moves, \textcolor{freeze}{sensitivity} (freezes caught) falls while
+\textcolor{navy}{specificity} (calm gait correctly left alone) rises; the dashed
+curve is Youden's $J=\text{sensitivity}+\text{specificity}-1$, whose peak (star)
+is the ``clean'' balanced optimum. Cadence faces the same trade-off and chooses to
+sit \emph{left} of the balanced point, buying recall of freezes at the cost of a
+few false alarms. (Curve shown for the interpretable model of
+Sec.~\ref{sec:detector}'s companion study; the principle is identical for the
+$\FI$ trip line.)}
+\label{fig:opsweep}
+\end{figure}
+
+To pick $\tau$ for the shipped rule we ran the real worksheet capture,
+\code{capture1.csv} (64\,Hz, 41.4\,s), through the exact windowing the firmware
+uses and counted outcomes window-by-window. The capture yields 19 control
+windows: 6 are genuine freeze windows and 13 are non-freeze (still or walking).
+Sweeping the trip line gives the two candidate operating points in
+Table~\ref{tab:sweep}.
+
+\begin{table}[H]
+\centering
+\caption{Real threshold sweep on \code{capture1.csv} (19 windows: 6 freeze,
+13 non-freeze). TP/FP/TN/FN counted per window. The shipped board uses
+$\tau=1.815$; $\tau=2.10$ is the balanced (Youden) optimum.}
+\label{tab:sweep}
+\small
+\begin{tabular}{l cccc cc l}
+\toprule
+Trip line $\tau$ & TP & FP & TN & FN & Sensitivity & Specificity & Note \\
+\midrule
+$\FI>1.815$ & 5 & 1 & 12 & 1 & \textbf{0.83} & 0.92 & \emph{shipped} (sensitivity-biased) \\
+$\FI>2.10$  & 5 & 0 & 13 & 1 & 0.83 & \textbf{1.00} & clean Youden optimum \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Read the table carefully, because the lesson is subtle. Both thresholds catch the
+same 5 of 6 freezes (sensitivity $0.83$ either way) and both miss the same one
+short freeze. The \emph{only} difference is a single window: at $\tau=1.815$ one
+calm window is wrongly flagged (FP\,$=1$, specificity $0.92$), whereas at
+$\tau=2.10$ that window is correctly left alone (FP\,$=0$, specificity $1.00$). So
+the higher threshold is strictly cleaner on \emph{this} capture --- it is the
+Youden-optimal point. Why does the board ship the lower, ``worse'' number?
+
+\begin{takeaway}
+A missed freeze can mean a fall; a false alarm just lights an LED that nobody acts
+on. The costs are wildly asymmetric, so Cadence biases toward \textbf{sensitivity}
+and ships $\tau=1.815$. On this capture both thresholds happen to tie on
+sensitivity, but $1.815$ leaves head-room: it keeps catching freezes that sit just
+\emph{below} $2.10$ on unseen wearers, where the clean optimum would start
+dropping them.
+\end{takeaway}
+
+The point is that $2.10$ is optimal \emph{for capture1}, and over-fitting a single
+short capture is exactly the trap to avoid. The trade-off the firmware actually
+cares about is the one on the \emph{next} wearer, whose freezes we have not seen.
+Pushing the trip line down to $1.815$ is cheap insurance: it costs one false alarm
+on this recording (a harmless flicker on the display) and buys a margin of safety
+against the freezes that a tighter line would let slip. The asymmetry of harm,
+not the arithmetic of one CSV, sets the threshold.
+
+\begin{keyidea}
+There are \emph{two} different ``right'' answers. The \textbf{Youden} answer
+($2.10$) maximises balanced accuracy on the data in front of you. The
+\textbf{clinical} answer ($1.815$) minimises the expected \emph{harm}, given that
+a false negative (missed freeze $\to$ possible fall) costs far more than a false
+positive (a brief, ignorable LED). Cadence is a safety monitor, so it ships the
+clinical answer.
+\end{keyidea}
+
+\noindent A note on provenance: a library default constant elsewhere in the code
+base reads $2.0$, but the \emph{deployed} value baked into the monitor firmware is
+$1.815$. The two should not be confused --- only $1.815$ is the shipped trip line.
+
+\subsection{Seeing the rule on real data}
+
+Figure~\ref{fig:cap1} makes the whole rule concrete on \code{capture1}. The top
+panel is the raw accelerometer magnitude $\norm{a}$ in milli-g; the bottom panel is
+the per-window Freeze Index. The capture is staged in four phases: still, walking,
+freeze, then recovery.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\linewidth]{capture1_trace}
+\caption{The detector's two inputs on \code{capture1}. \emph{Top:} accelerometer
+magnitude $\norm{a}$ (mg) --- note the violent, dense oscillation during the
+freeze phase, with heel-strike-scale peaks that would clip a $\pm2$\,g range.
+\emph{Bottom:} the per-window Freeze Index, which sits near $1$ through still and
+walking and erupts to a peak of $21.35$ during the freeze. The shipped trip line
+$\tau=1.815$ cuts cleanly between the two regimes.}
+\label{fig:cap1}
+\end{figure}
+
+The numbers match the picture. Per-phase $\FI$ on this capture is around $1.1$ at
+rest (max $1.71$) and around $1.2$ while walking (max $2.08$); during the freeze it
+jumps to a mean of $6.89$, median $4.45$, and peak $21.35$. The trip line at
+$1.815$ sits comfortably in the empty gap above the walking distribution and well
+below the freeze surge --- which is precisely why a simple horizontal threshold
+works at all. Note too that the still and walking maxima ($1.71$ and $2.08$)
+straddle $1.815$: that lone window above the line during normal activity is the
+single false positive in Table~\ref{tab:sweep}, and is exactly what the gate and
+debounce exist to tame.
+
+\subsection{Debounce: don't trust a one-window verdict}
+
+A 256-sample window with a 128-sample hop produces one fresh verdict every two
+seconds. Real motion is noisy, and a single unlucky window --- one heel-strike
+landing awkwardly, one transient bump --- can momentarily push $\FI$ across the
+line. If the device committed every window instantly, the dashboard would flicker
+and a one-off jolt could read as a freeze.
+
+Cadence therefore \textbf{debounces}: a \emph{new} state must persist for
+\textbf{two consecutive} control windows before it is committed. This is
+\emph{assert-after-2} for entering a state and \emph{release-after-2} for leaving
+one. A single anomalous window can never flip the verdict; it takes a sustained,
+two-window-deep change ($\geq$ about four seconds of agreeing evidence given the
+overlap) to move the committed state. Because a genuine freeze lasts seconds, real
+episodes clear this bar easily, while isolated spikes do not.
+
+\begin{intuition}
+Debounce is the same trick as a mechanical light switch that must be held, not
+brushed. One stray window is a brush; the switch ignores it. Two windows in a row
+saying the same thing is a deliberate press, and only then does the verdict
+change. The cost is a short, bounded latency --- but a freeze that lasts seconds
+has time to spare, and a fall-risk monitor would rather be right than instant.
+\end{intuition}
+
+\subsection{Putting it together: the state machine}
+
+The gate, the threshold, and the debounce compose into a three-state machine that
+emits STILL, WALKING, or FREEZE. Figure~\ref{fig:tree} draws the live decision
+path for a single control window.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.95\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\sffamily,
+  >=Stealth,
+  node distance=14mm,
+  deci/.style={diamond, aspect=1.7, draw=navy, fill=palenavy, line width=0.7pt,
+               inner sep=1pt, align=center, minimum width=34mm},
+  state/.style={rounded corners=3pt, draw, line width=0.8pt, align=center,
+                minimum width=26mm, minimum height=11mm, font=\bfseries},
+  still/.style={state, draw=mute,   fill=mist},
+  walk/.style={state,  draw=grn,    fill=paleteal},
+  frz/.style={state,   draw=freeze, fill=palefreeze},
+  lbl/.style={font=\footnotesize\sffamily, fill=white, inner sep=1.5pt},
+  flow/.style={->, line width=0.8pt, draw=ink}
+]
+
+% input
+\node[rounded corners=3pt, draw=teal, fill=paleteal, line width=0.8pt,
+      align=center, minimum height=11mm, minimum width=30mm] (in)
+      {New 4\,s window\\[1pt]\footnotesize\mdseries energy, $\FI$};
+
+% gate
+\node[deci, right=20mm of in] (gate) {energy $>$\\ still\_floor\,?};
+
+% FI test
+\node[deci, right=24mm of gate] (fi) {$\FI > 1.815$\,?};
+
+% debounce (shared) — placed to the right of FI
+\node[deci, right=24mm of fi] (deb) {same state\\ 2 windows\\ in a row\,?};
+
+% states column on the far right
+\node[frz,   right=22mm of deb] (freeze) {FREEZE};
+\node[walk, below=16mm of freeze] (walking) {WALKING};
+\node[still, above=16mm of freeze] (stillS) {STILL};
+
+% flows
+\draw[flow] (in) -- (gate);
+\draw[flow] (gate) -- node[lbl,above]{moving} (fi);
+\draw[flow] (fi)   -- node[lbl,above]{yes} (deb);
+
+% gate NO -> still candidate (down then to debounce as STILL)
+\coordinate (gbot) at ($(gate.south)+(0,-20mm)$);
+\draw[flow] (gate.south) -- node[lbl,right=1pt]{still} (gbot)
+            -| (deb.south);
+% FI NO -> walking candidate
+\coordinate (fbot) at ($(fi.south)+(0,-11mm)$);
+\draw[flow] (fi.south) -- node[lbl,right=1pt]{no}(fbot) -| ($(deb.south)+(-3mm,0)$);
+
+% debounce YES -> commit (to whichever candidate state was carried)
+\draw[flow] (deb.east) -- node[lbl,above]{commit}(freeze.west);
+\draw[flow] (deb.north) -- node[lbl,left=1pt]{if STILL} (stillS.south);
+\draw[flow] (deb.south) -- node[lbl,left=1pt]{if WALK} (walking.north);
+
+% debounce NO -> hold (loop)
+\draw[flow] (deb.north west) .. controls ($(deb.north west)+(-4mm,12mm)$) and
+            ($(fi.north east)+(4mm,12mm)$) ..
+            node[lbl,above]{no: hold last state} (fi.north east);
+
+\end{tikzpicture}}
+\caption{The shipped state machine for one control window. The \textbf{gate}
+(energy vs.\ \code{still\_floor}) runs first; only if the leg is moving is the
+\textbf{$\FI$ threshold} consulted. The resulting candidate state
+(STILL\,/\,WALKING\,/\,FREEZE) is committed only after the \textbf{debounce}
+confirms it has held for two consecutive windows; otherwise the previous committed
+state is retained. Equivalently: \emph{STILL} if not moving; else \emph{FREEZE} if
+$\FI>1.815$; else \emph{WALKING}.}
+\label{fig:tree}
+\end{figure}
+
+In plain words, the state for each window is decided as:
+\begin{enumerate}
+\item \textbf{Gate.} If movement energy $<$ \code{still\_floor}, the candidate is
+\textsf{STILL} and the $\FI$ is not even evaluated (it would be noise).
+\item \textbf{Threshold.} Otherwise, if $\FI > 1.815$ the candidate is
+\textsf{FREEZE}; if not, the leg is moving but not freeze-shaped, so the candidate
+is \textsf{WALKING}.
+\item \textbf{Debounce.} The candidate becomes the \emph{committed} state only once
+it has held for two consecutive windows; until then, the last committed state
+stands.
+\end{enumerate}
+
+This committed state is the single output of the device. It paints the NeoPixel
+ring (state colours), prints to the OLED, and on the live dashboard drives the
+headline \textbf{Gait Status} panel, while the \textbf{Freeze Margin} meter shows
+the live $\FI$ as a percentage of the $1.815$ trip line so a user can watch a
+freeze build before the line is crossed.
+
+\begin{takeaway}
+The whole shipped detector is three guards in series --- \textbf{gate} (is the leg
+moving?), \textbf{threshold} (is it moving like a freeze?), \textbf{debounce} (has
+it held?). Each one removes a specific failure mode: the gate kills the still-leg
+$\FI$ blow-up, the sensitivity-biased threshold ($1.815$) refuses to miss a freeze,
+and the two-window debounce refuses to be fooled by a single jolt. Simple,
+inspectable, and tuned for the cost that actually matters: a missed freeze.
+\end{takeaway}

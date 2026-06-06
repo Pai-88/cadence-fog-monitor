@@ -1,0 +1,330 @@
+\section{Results, Limitations, Future Work \& Conclusion}
+\label{sec:results-future}
+
+The aim of this project was modest and specific: build a low-cost, ankle-worn device
+that \emph{monitors} freeze of gait (FoG) and reports it honestly on a screen, rather
+than a black box that issues opaque verdicts. Everything in the preceding sections ---
+the single accelerometer, the orientation-invariant magnitude, the Welch spectrum, the
+Freeze Index, and the glass-box detector --- exists to serve that aim. This closing
+section asks the only question that matters: \emph{does it work, and where does it
+fail?} We summarise the measured performance with real numbers, are candid about the
+limitations a single ankle sensor inevitably carries, sketch the upgrades we would
+pursue with more time, and tie the result back to the original goal.
+
+\begin{keyidea}
+We report \textbf{sensitivity} (the fraction of true freezes caught) and
+\textbf{specificity} (the fraction of calm gait correctly left alone), \emph{not} raw
+accuracy. Freezes are rare events, so accuracy flatters a lazy model: a detector that
+\emph{never} flags a freeze can score $\sim$0.90 accuracy yet 0.00 sensitivity --- it
+is useless to a patient at risk of a fall. The two numbers that matter are the two we
+quote everywhere below.
+\end{keyidea}
+
+\subsection{What works --- the headline numbers}
+
+Three detectors were evaluated, each answering a different ``what if'' question. The
+\emph{shipped} detector is the glass-box Freeze Index rule running on the board. The
+\emph{CNN} (FoGNet) and the \emph{RandomForest} are the ``given more time'' upgrades,
+evaluated offline. Table~\ref{tab:results-summary} collects their operating points side
+by side.
+
+\begin{table}[H]
+\centering
+\caption{Measured operating points. The shipped FI rule is scored on the worksheet
+capture (\code{capture1.csv}, 19 windows: 6 freeze, 13 non-freeze); the CNN and the
+RandomForest are scored under leave-one-subject-out (LOSO) cross-validation on the
+public Daphnet FoG dataset. Sensitivity and specificity are the headline pair.}
+\label{tab:results-summary}
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}llccl@{}}
+\toprule
+\textbf{Detector} & \textbf{Evaluation} & \textbf{Sens.} & \textbf{Spec.} &
+\textbf{Confusion / ranking} \\
+\midrule
+FI rule, $\FI>1.815$ (shipped)     & capture1 sweep & 0.83 & 0.92 & TP\,5, FP\,1, TN\,12, FN\,1 \\
+FI rule, $\FI>2.10$ (Youden)       & capture1 sweep & 0.83 & 1.00 & TP\,5, FP\,0, TN\,13, FN\,1 \\
+FoGNet (1-D CNN, $\sim$18k params) & pooled LOSO    & 0.71 & 0.84 & acc.\ 0.83; $n=8982$ \\
+RandomForest (9 features)          & nested LOSO    & 0.75 & 0.76 & ROC-AUC 0.82, PR-AUC 0.33 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{intuition}
+Read the FI rule's two rows as a dial, not a verdict. Raising the trip line from
+$1.815$ to $2.10$ removes the single false alarm (specificity climbs $0.92\!\to\!1.00$)
+\emph{without losing any extra freezes} (sensitivity stays $0.83$) on this capture. The
+Youden-optimal point is therefore $2.10$ --- yet the board deliberately ships the
+\emph{lower} $1.815$. The reason is asymmetric cost: on a fresh, unseen wearer a missed
+freeze can mean a fall, while a stray false alarm only lights an LED. We trade a little
+specificity for a margin of safety on people the device has never seen.
+\end{intuition}
+
+The shipped Freeze Index behaves exactly as the physics predicts. On
+\code{capture1.csv} the per-phase FI cleanly separates the three regimes: standing
+\emph{still} sits at $\sim$1.1 (max 1.71), \emph{walking} at $\sim$1.2 (max 2.08), and
+genuine \emph{freezing} jumps to a mean of 6.89 (median 4.45, max 21.35). The freeze
+distribution lives almost entirely above both calm regimes, which is precisely why a
+single ratio threshold can separate them. The two false-classified windows in the sweep
+(one FP, one FN at $\FI>1.815$) are exactly the boundary cases one expects: a short
+freeze diluted by the 4\,s window, and a vigorous walking transient that momentarily
+borrowed freeze-band energy.
+
+The CNN tells a complementary story. FoGNet was trained on Daphnet with
+leave-one-subject-out cross-validation --- every test subject is held out entirely, so
+the score reflects generalisation to a \emph{new person}, not to new windows from a
+known person. Its pooled confusion matrix (TN\,6842, FP\,1285, FN\,248, TP\,607) gives
+sensitivity 0.71, specificity 0.84, and accuracy 0.83
+(Figure~\ref{fig:results-metrics}). That its accuracy and the FI rule's are not directly
+comparable is the whole point: they are measured on different data, under different
+protocols, and the CNN's honest LOSO sensitivity of 0.71 is the realistic figure for a
+model meeting a brand-new wearer.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\linewidth]{metrics_panel}
+\caption{Operating-point metric panel for the FoGNet CNN under pooled leave-one-subject-out
+evaluation. Sensitivity (0.71) and specificity (0.84) are the headline pair; precision and
+F1 (red) are dragged down by class imbalance, and accuracy (0.83) is reported but \emph{not}
+trusted, because on a rare-event problem accuracy hides exactly the errors that hurt a
+patient most.}
+\label{fig:results-metrics}
+\end{figure}
+
+Figure~\ref{fig:results-persubject} breaks the CNN down per held-out subject and exposes
+the variance that the single pooled number averages away.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\linewidth]{per_subject}
+\caption{Per-subject LOSO performance. Each bar is one held-out wearer the model never
+saw in training. The spread between subjects --- not the pooled average --- is the
+honest measure of how this device behaves on someone new, and it is the single
+strongest argument for the per-patient calibration proposed in
+Section~\ref{sec:results-future}.}
+\label{fig:results-persubject}
+\end{figure}
+
+\begin{takeaway}
+On its worksheet capture the shipped glass-box rule catches 5 of 6 freezes and raises
+just one false alarm (0.83 sensitivity, 0.92 specificity). The CNN, judged on the much
+harder ``never met this person'' LOSO protocol, reaches 0.71 / 0.84. Both detect FoG
+well; neither is perfect, and the gap between them is mostly the gap between
+``seen this signal'' and ``seen this person''.
+\end{takeaway}
+
+\subsection{Limitations --- where Cadence falls short}
+
+A monitor that overstates its reach is worse than one that is candid about its blind
+spots. Cadence has several, and they follow directly from its design choices.
+
+\begin{description}[leftmargin=1.2em,style=nextline]
+\item[A single ankle sensor sees one thing.] One accelerometer on one ankle captures
+the trembling foot beautifully, but it is blind to the rest of the body. It cannot tell
+a freeze apart from a confounder that produces the same 3--8\,Hz vibration somewhere
+else in the signal chain (see below), and it cannot disambiguate the kind of freeze
+that involves the trunk or the contralateral leg.
+\item[Standing still is not a freeze.] The tell-tale FoG signature is rapid 3--8\,Hz
+trembling of the feet \emph{in place}. A patient who is genuinely motionless ---
+deliberately standing --- produces almost no movement energy, so the still-floor gate
+forces the verdict to \textsc{still} and the FI is never consulted. This is correct
+behaviour, but it means a hypothetical ``akinetic'' freeze with no tremor would not
+register. Cadence detects \emph{trembling} freezes, which are the common and
+fall-relevant kind, not every conceivable arrest of gait.
+\item[A small, personal dataset.] The shipped threshold was tuned on a single
+worksheet capture (19 windows). That is enough to demonstrate the principle and to set
+a sane default, but it is far too small to claim a population-level operating point.
+\item[The LOSO generalisation gap.] The CNN's pooled LOSO numbers (0.71 / 0.84) are
+already the cautious figures, yet Figure~\ref{fig:results-persubject} shows real
+subject-to-subject variance underneath them. A model tuned to the average wearer will
+under-serve those at the tails of that distribution.
+\item[The Freeze Index has confounders.] FI is a ratio of freeze-band to locomotor-band
+power. \emph{Anything} that injects 3--8\,Hz energy can inflate it: voluntarily shaking
+the leg, the vibration of a moving vehicle, or simply picking the device up and handling
+it. The still-floor gate and the assert-after-2 / release-after-2 debounce suppress the
+brief and the low-energy versions of these, but a sustained, leg-borne 3--8\,Hz
+vibration is, to a single accelerometer, indistinguishable from a tremor.
+\end{description}
+
+\begin{figure}[H]
+\centering
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\sffamily,
+  band/.style={draw,rounded corners=2pt,minimum height=10mm,minimum width=30mm,
+    align=center,font=\small,fill=white},
+  gd/.style={band,fill=paleteal,draw=teal,text=ink},
+  fz/.style={band,fill=palefreeze,draw=freeze,text=ink},
+  cf/.style={band,fill=paleamber,draw=amber,text=ink},
+  guard/.style={band,fill=palenavy,draw=navy,text=ink},
+  flow/.style={-{Latex[length=2.4mm]},thick,mute},
+  lbl/.style={font=\footnotesize\itshape,mute}
+]
+% real freeze on the left
+\node[fz] (real) at (0,0) {\textbf{Real freeze}\\3--8\,Hz tremor\\\emph{in place}};
+% confounders
+\node[cf] (volu) at (0,-1.7) {Voluntary leg shake};
+\node[cf] (vehi) at (0,-3.0) {Vehicle vibration};
+\node[cf] (hand) at (0,-4.3) {Handling the device};
+% the FI computation
+\node[gd] (fi) at (5.2,-2.15) {\textbf{Freeze Index}\\$P_{3\text{--}8}/P_{0.5\text{--}3}$\\
+  \emph{ratio rises}};
+% guards
+\node[guard] (gate) at (10.0,-1.0) {Still-floor gate\\(needs movement)};
+\node[guard] (deb)  at (10.0,-3.3) {Debounce 2$\times$\\(needs persistence)};
+% verdict
+\node[fz] (verd) at (14.6,-2.15) {\textbf{Freeze}\\reported};
+% arrows in
+\draw[flow,freeze] (real) -- (fi);
+\draw[flow] (volu) -- (fi);
+\draw[flow] (vehi) -- (fi);
+\draw[flow] (hand) -- (fi);
+% FI to guards
+\draw[flow] (fi) -- (gate);
+\draw[flow] (fi) -- (deb);
+% guards to verdict
+\draw[flow] (gate) -- (verd);
+\draw[flow] (deb) -- (verd);
+% annotation
+\node[lbl,text width=34mm,align=center] at (5.2,-5.0)
+  {a \emph{single} accelerometer\\cannot tell these apart};
+\node[lbl,text width=30mm,align=center] at (10.0,-5.0)
+  {brief/low-energy\\confounders are filtered};
+\end{tikzpicture}}
+\caption{The confounder problem and the two guards that mitigate it. A real freeze and
+several confounders all raise the Freeze Index because each injects 3--8\,Hz energy.
+The still-floor gate and the two-window debounce reject the brief and the motionless
+ones, but a \emph{sustained, leg-borne} 3--8\,Hz vibration remains, to one ankle
+sensor, indistinguishable from a tremor.}
+\label{fig:results-confound}
+\end{figure}
+
+\subsection{Future work}
+
+The limitations above are not dead ends; each maps onto a concrete next step, ordered
+roughly from ``cheapest and most impactful'' to ``a significant programme in its own
+right''.
+
+\begin{enumerate}[leftmargin=1.6em]
+\item \textbf{Per-patient threshold calibration.} The single biggest win. Because FI is
+scale-invariant but its \emph{distribution} shifts between people
+(Figure~\ref{fig:results-persubject}), a brief enrolment --- a minute of calm walking to
+learn a wearer's baseline FI and movement energy --- would let the trip line move away
+from a one-size-fits-all $1.815$ toward that wearer's own Youden-optimal point. This is
+data the device already computes at boot for the still-floor gate; extending it to the
+FI threshold is mostly bookkeeping.
+\item \textbf{Sensor fusion with a gyroscope.} Adding angular velocity gives the system
+a second, partly independent view of the same motion. A real in-place tremor has a
+characteristic rotational signature that a whole-body vehicle vibration does not, which
+directly attacks the confounder problem of Figure~\ref{fig:results-confound}.
+\item \textbf{The CNN on-device.} FoGNet runs in under a millisecond on a laptop CPU and
+has only $\sim$18k parameters. Quantised and converted with TensorFlow Lite for
+Microcontrollers, it is a realistic fit for a more capable host such as an ESP32-S3,
+turning the offline ``given more time'' model into a second on-device opinion alongside
+the glass-box rule.
+\item \textbf{More body sites.} A second sensor --- the other ankle, the waist, or the
+thigh --- would let the device distinguish bilateral from unilateral events and would
+help separate true gait freezes from local leg artefacts.
+\item \textbf{A regulated closed-loop cueing version.} Cadence already carries a coin
+vibration motor, fitted but \emph{disabled} in firmware by design. A future, properly
+regulated device could close the loop and deliver a rhythmic cue when a freeze is
+detected --- the well-evidenced intervention for FoG. We flag this explicitly as a
+\emph{later} step: turning a monitor into a therapy is a regulatory and clinical
+undertaking, not a firmware flag, and it is out of scope for a one-week wearable sprint.
+\end{enumerate}
+
+\begin{intuition}
+Notice the throughline: every future item buys back a specific limitation. Calibration
+answers the LOSO gap; the gyro answers the confounders; on-device CNN and extra sites
+answer the single-sensor blind spot; and the cueing version answers the unspoken wish
+behind any monitor --- to eventually \emph{help}, not just watch. We have ordered them
+so that the cheapest fixes attack the most common failure first.
+\end{intuition}
+
+\subsection{Conclusion}
+
+We set out to build a low-cost, ankle-worn \emph{monitor} for freeze of gait --- a
+device that detects the tell-tale 3--8\,Hz trembling, reports it transparently on an
+OLED, an LED ring, and a live dashboard, and explains \emph{why} it decided what it
+decided. Cadence does this. On its worksheet capture the shipped glass-box Freeze Index
+rule catches 5 of 6 freezes against a single false alarm (sensitivity 0.83, specificity
+0.92), and the cleaner sensitivity-plus-specificity optimum sits at $\FI>2.10$ --- we
+ship the more cautious $1.815$ on purpose, because a missed freeze can mean a fall. The
+offline CNN, held to the demanding ``never met this person'' LOSO standard, reaches a
+realistic 0.71 / 0.84, and a 9-feature RandomForest confirms the signal is learnable
+and interpretable (0.75 / 0.76, ROC-AUC 0.82).
+
+None of these numbers is perfect, and we have been deliberate about saying so: one
+ankle sensor, a small personal dataset, a real generalisation gap, and a Freeze Index
+that any 3--8\,Hz vibration can fool. But the device is honest about all of it. It
+reports the headline pair that actually matters for a rare, dangerous event; it shows
+the wearer how close they are to the trip line rather than a bare verdict; and it keeps
+its therapy motor switched off until a properly regulated successor could earn the right
+to use it. Within the scope of a one-week ENGF0031 ``Smart Clothing'' sprint, Cadence
+meets its aim: an affordable, transparent, untethered freeze-of-gait monitor whose every
+decision can be traced back to a physical quantity you can point at on the screen.
+
+\begin{takeaway}
+Cadence is a \emph{monitor}, and a good one: it catches most freezes, leaves calm gait
+alone, and never hides its reasoning. Its honesty about what it cannot yet do --- the
+single sensor, the small dataset, the confounders --- is not a weakness of the report
+but the foundation of the roadmap that would make it a clinical tool.
+\end{takeaway}
+
+\subsection*{Appendix A \quad Signal-processing parameters}
+\addcontentsline{toc}{subsection}{Appendix A: Signal-processing parameters}
+
+Every quantitative choice in the live pipeline is collected in
+Table~\ref{tab:params} so the device can be reproduced exactly. The values are fixed in
+\code{fog.config} and mirrored in the firmware; the only field that adapts at runtime is
+the still-floor, auto-calibrated from resting energy at boot.
+
+\begin{table}[H]
+\centering
+\caption{The complete signal-processing parameter set for the shipped detector.}
+\label{tab:params}
+\small
+\begin{tabular}{@{}llp{6.6cm}@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value} & \textbf{Role} \\
+\midrule
+Sampling rate $f_s$        & 64\,Hz             & Nyquist 32\,Hz covers every band of interest \\
+Accelerometer range        & $\pm$8\,g          & heel-strike exceeds $\pm$2\,g, so $\pm$2\,g would clip \\
+Window length $N$          & 256 samples (4.0\,s) & buys spectral resolution for the 3--8\,Hz band \\
+Hop length                 & 128 samples (2.0\,s) & 50\% overlap $\Rightarrow$ one decision every 2\,s \\
+Bin spacing $df=f_s/N$     & 0.25\,Hz           & spectral resolution of the Welch PSD \\
+Spectral estimator         & Welch, Hann taper  & on the mean-removed magnitude \\
+Locomotor band             & 0.5--3\,Hz         & walking-rhythm energy (FI denominator) \\
+Freeze band                & 3--8\,Hz           & FoG tremble energy (FI numerator) \\
+Rest-tremor band           & 4--6\,Hz           & reported separately as tremor power \\
+Freeze Index threshold     & 1.815              & deployed trip line (Youden optimum is 2.10) \\
+Still-floor gate           & auto (boot)        & forces \textsc{still} when energy below floor \\
+Debounce                   & 2 windows          & assert-after-2 / release-after-2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection*{Appendix B \quad Glossary}
+\addcontentsline{toc}{subsection}{Appendix B: Glossary}
+
+\begin{description}[leftmargin=1.2em,style=nextline,font=\bfseries\color{navy}]
+\item[FoG --- Freeze of Gait] A sudden, brief inability to step (``feet glued to the
+floor''), common in mid/late Parkinson's and a major fall risk; its signature is rapid
+3--8\,Hz trembling of the feet in place.
+\item[FI --- Freeze Index] The ratio $P_{3\text{--}8\,\mathrm{Hz}}/P_{0.5\text{--}3\,\mathrm{Hz}}$
+of the mean-removed magnitude (Moore et al.\ 2008). Being a ratio, it is scale-invariant:
+mg versus g cancels.
+\item[LOSO --- Leave-One-Subject-Out] Cross-validation in which an entire subject is
+held out for testing, so the score measures generalisation to a \emph{new person}, not
+merely to new windows from a known person.
+\item[Sensitivity] $\mathrm{TP}/(\mathrm{TP}+\mathrm{FN})$ --- the fraction of true
+freezes the detector catches.
+\item[Specificity] $\mathrm{TN}/(\mathrm{TN}+\mathrm{FP})$ --- the fraction of calm
+(non-freeze) windows correctly left alone.
+\item[PSD --- Power Spectral Density] How signal power is distributed across frequency;
+here estimated with a Hann-tapered Welch method. Band power is the PSD summed over a
+band's bins.
+\item[GAP --- Global Average Pooling] In FoGNet, the operation that collapses each of
+the 64 feature channels to a single number, yielding a fixed-size descriptor regardless
+of input length.
+\end{description}

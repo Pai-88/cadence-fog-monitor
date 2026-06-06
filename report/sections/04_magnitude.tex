@@ -1,0 +1,250 @@
+\section{Acceleration Magnitude}
+\label{sec:magnitude}
+
+The accelerometer hands us three numbers every \SI{15.6}{ms}: $a_x$, $a_y$, $a_z$,
+the projection of acceleration onto the board's own three axes. Those three numbers
+are a poor place to start a freeze detector, because they describe how the
+\emph{board} is oriented as much as how the \emph{leg} is moving. Before we compute a
+single spectrum we collapse the triplet into one orientation-invariant scalar, the
+\emph{magnitude}, and then strip its mean. This short chapter justifies both moves and
+walks a worked example through them.
+
+\begin{intuition}
+Tape the Circuit Playground onto an ankle and the $x$-axis might point forward today
+and slightly skyward tomorrow, depending on how the sleeve was pulled on. A freeze --
+a \SIrange{3}{8}{Hz} tremble of the foot -- is the \emph{same physical event} either
+way, but its energy would land in different axes. We want a number that asks ``how
+hard is the ankle shaking?'' without ever asking ``which way is the board facing?''
+The length of the acceleration vector answers exactly that.
+\end{intuition}
+
+\subsection{Why one scalar, not three}
+
+An accelerometer measures a vector, $\mathbf{a}=(a_x,a_y,a_z)$. Rotating the sensor
+on the ankle applies a rotation $R$ to that vector: the components $a_x,a_y,a_z$
+change, but the underlying physical acceleration is unchanged. Any per-axis feature
+inherits the sensor's pose and therefore drifts as the sleeve shifts. The Euclidean
+length, by contrast, is a rotational invariant -- $\norm{R\mathbf{a}}=\norm{\mathbf{a}}$
+for every rotation $R$ -- so it reports the strength of the acceleration regardless of
+how the board sits. That is the whole motivation. We define the magnitude
+
+\begin{equation}
+a \;=\; \norm{\mathbf{a}} \;=\; \sqrt{a_x^{2}+a_y^{2}+a_z^{2}}\,,
+\label{eq:mag}
+\end{equation}
+
+a single non-negative time series sampled, like its three parents, at
+\SI{64}{Hz}. Everything downstream -- the Welch spectrum, the band powers, the
+$\FI$ ratio -- runs on this one channel.
+
+\begin{keyidea}
+The magnitude $a=\sqrt{a_x^2+a_y^2+a_z^2}$ is \textbf{orientation-invariant}: rotate
+the board however you like and $a$ is unchanged. A freeze that shows up as
+\SIrange{3}{8}{Hz} energy is detected the same way whether the sleeve was pulled on
+neatly or twisted, which is precisely the robustness an ankle-worn wearable needs.
+\end{keyidea}
+
+\begin{figure}[H]
+\centering
+\resizebox{0.92\textwidth}{!}{%
+\begin{tikzpicture}[>={Latex[length=2.6mm]},line cap=round]
+  % --- 3D axes (simple isometric) ---
+  \def\ox{0}\def\oy{0}
+  \coordinate (O) at (\ox,\oy);
+  % axis directions
+  \coordinate (X) at (2.7,-0.35);   % a_x  (forward)
+  \coordinate (Y) at (3.2,0.55);    % a_y
+  \coordinate (Z) at (0,3.0);       % a_z  (up)
+  \draw[->,thick,mute] (O)--(X) node[below right=-1pt]{\small $a_x$};
+  \draw[->,thick,mute] (O)--(Y) node[right=-1pt]{\small $a_y$};
+  \draw[->,thick,mute] (O)--(Z) node[above=-1pt]{\small $a_z$};
+
+  % the measured vector a = (1.0, 0.6, 2.4)-ish in this projection
+  \coordinate (P) at (1.95,2.55);          % tip of a
+  \coordinate (Pxy) at (1.95,-0.18);       % foot in the x-y plane
+  % component guides
+  \draw[densely dashed,rule] (O)--(Pxy);
+  \draw[densely dashed,rule] (Pxy)--(P);
+  \draw[densely dashed,rule] (O)--($(O)!1!(Pxy)$);
+  % component arrows along axes (schematic)
+  \draw[->,teal,thick] (O)--(1.1,-0.14) node[midway,below=1pt]{\scriptsize $a_x$};
+  \draw[->,teal,thick] (1.1,-0.14)--(Pxy) node[midway,below=2pt]{\scriptsize $a_y$};
+  \draw[->,teal,thick] (Pxy)--(P) node[midway,right=1pt]{\scriptsize $a_z$};
+
+  % the magnitude vector itself
+  \draw[->,very thick,navy] (O)--(P);
+  \node[navy] at (0.78,1.95) {\large $\mathbf{a}$};
+  \node[fill=palenavy,draw=navy,rounded corners,inner sep=2.5pt] at (3.0,2.55)
+        {$\norm{\mathbf{a}}=\sqrt{a_x^2+a_y^2+a_z^2}$};
+
+  % right-angle ticks
+  \draw[mute] ($(Pxy)+(-0.16,0)$)--($(Pxy)+(-0.16,0.16)$)--($(Pxy)+(0,0.16)$);
+
+  % --- the rotation idea on the right ---
+  \begin{scope}[xshift=6.6cm]
+    \draw[->,thick,mute] (0,0)--(2.6,-0.3) node[below right=-1pt]{\small $a_x'$};
+    \draw[->,thick,mute] (0,0)--(2.9,0.7)  node[right=-1pt]{\small $a_y'$};
+    \draw[->,thick,mute] (0,0)--(0.5,3.0)  node[above=-1pt]{\small $a_z'$};
+    \draw[->,very thick,navy] (0,0)--(1.95,2.55);
+    \node[navy] at (0.7,1.9) {\large $\mathbf{a}$};
+    % curved rotate arrow
+    \draw[->,freeze,thick] (3.05,1.55) to[bend left=40] (2.55,2.55);
+    \node[freeze,align=center,font=\scriptsize] at (3.9,1.95)
+        {board\\rotated $R$};
+    \node[fill=palefreeze,draw=freeze,rounded corners,inner sep=2.5pt,font=\small]
+        at (1.55,3.4) {$\norm{R\mathbf{a}}=\norm{\mathbf{a}}$ \,(unchanged)};
+  \end{scope}
+\end{tikzpicture}}
+\caption{The acceleration vector $\mathbf{a}$ and its Euclidean norm. Left: the three
+axis components combine, by Pythagoras in 3-D, into one length $\norm{\mathbf{a}}$.
+Right: rotating the board on the ankle changes the components $a_x,a_y,a_z$ but leaves
+the length untouched -- the property that makes the magnitude a safe foundation for the
+detector.}
+\label{fig:vec3d}
+\end{figure}
+
+\begin{mathsbox}
+Equation~\eqref{eq:mag} is just Pythagoras in three dimensions. The length of a vector
+is the square root of the sum of its squared components, so it cannot depend on the
+\emph{labels} we attach to the axes -- only on the vector itself. Squaring also makes
+the result blind to sign: a downward jolt ($a_z<0$) and an upward one of equal size
+contribute identically. The magnitude is therefore a non-negative ``how much
+acceleration, in total'' signal, and it discards the directional information we
+deliberately do not want.
+\end{mathsbox}
+
+\subsection{Removing the mean: motion, not posture}
+
+There is a second problem the raw magnitude does not solve. A still ankle is not at
+zero -- it sits in Earth's gravity, so $\norm{\mathbf{a}}\approx\SI{1}{\textit{g}}$
+($\approx\SI{9.81}{m/s^2}$) even when nothing moves. That constant is a large DC
+offset. If we fed it straight into a spectrum it would dominate the lowest bins and
+swamp the small \SIrange{3}{8}{Hz} wiggle we are hunting for. Worse, the exact value of
+that offset depends on \emph{posture} -- how the foot is tilted -- which is again
+something we want the detector to ignore.
+
+The fix is to subtract the window mean before any spectral analysis:
+
+\begin{equation}
+\tilde a[n] \;=\; a[n]-\bar a,
+\qquad
+\bar a \;=\; \frac{1}{N}\sum_{n=0}^{N-1} a[n].
+\label{eq:demean}
+\end{equation}
+
+This kills the DC term (the \SI{0}{Hz} bin) and, with it, the gravity plateau and any
+slow posture drift. What survives is the \emph{fluctuation} of the magnitude about its
+own average -- the part caused by the leg actually moving. Because the Welch spectrum
+and the band powers all operate on $\tilde a$, every later quantity describes motion
+rather than orientation.
+
+\begin{takeaway}
+Magnitude removes \emph{direction}; mean-subtraction removes \emph{the static pull of
+gravity and posture}. What is left -- $\tilde a[n]$ -- is pure ankle motion, the only
+thing the freeze detector should ever react to.
+\end{takeaway}
+
+\subsection{A worked example}
+
+Take one sample with components (in $g$) $a_x=0.20$, $a_y=-0.30$, $a_z=0.96$ -- a foot
+mostly upright with a small forward-and-sideways shove. Its magnitude is
+
+\[
+a=\sqrt{0.20^{2}+(-0.30)^{2}+0.96^{2}}
+ =\sqrt{0.04+0.09+0.9216}
+ =\sqrt{1.0516}\approx \SI{1.025}{\textit{g}}.
+\]
+
+Now rotate the board so the same physical acceleration reads
+$a_x'=0.96$, $a_y'=0.20$, $a_z'=-0.30$ instead. The components are scrambled, yet
+
+\[
+a'=\sqrt{0.96^{2}+0.20^{2}+(-0.30)^{2}}=\sqrt{0.9216+0.04+0.09}=\sqrt{1.0516}\approx \SI{1.025}{\textit{g}},
+\]
+
+exactly the same length -- a numerical demonstration of the invariance in
+Figure~\ref{fig:vec3d}. Finally, over a short window suppose the magnitude takes the
+three values $1.02,\,1.04,\,1.00\;(g)$. Their mean is $\bar a=1.02$, so the
+mean-removed signal is $\tilde a=(0,\,+0.02,\,-0.02)$: a tiny zero-centred wiggle.
+That wiggle -- not the $\approx\!1\,g$ baseline -- is what the spectrum sees.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.95\textwidth}{!}{%
+\begin{tikzpicture}
+  % three small axis traces on the left
+  \begin{scope}
+    \foreach \k/\ph/\col/\lab in {0/0/teal/$a_x$, 1/2.1/steel/$a_y$, 2/4.2/navy/$a_z$}{
+      \begin{scope}[yshift=-\k*1.55cm]
+        \draw[->,mute,thin] (-0.2,0)--(4.5,0);
+        \draw[mute,thin,densely dotted] (-0.2,0)--(4.5,0);
+        \draw[\col,thick] plot[domain=0:4.3,samples=80,smooth]
+            (\x,{0.55*sin(deg(2.9*\x+\ph)) + 0.18*sin(deg(7.5*\x+\ph))});
+        \node[\col,left=2pt] at (-0.2,0) {\small \lab};
+      \end{scope}}
+    \node[mute,font=\scriptsize] at (2.1,0.95) {three raw axes (each pose-dependent)};
+  \end{scope}
+
+  % combine arrow + formula
+  \node[draw=teal,fill=paleteal,rounded corners,align=center,font=\small]
+      (box) at (6.7,-1.55) {$a=\sqrt{a_x^2+a_y^2+a_z^2}$\\[2pt]then $\tilde a=a-\bar a$};
+  \draw[->,very thick,teal] (4.7,-1.55)--(box.west);
+
+  % single magnitude trace on the right
+  \begin{scope}[xshift=9.2cm,yshift=-1.55cm]
+    \draw[->,mute,thin] (-0.2,0)--(4.6,0) node[right,mute,font=\scriptsize]{time};
+    \draw[mute,thin,densely dotted] (-0.2,0)--(4.6,0);
+    \draw[navy,very thick] plot[domain=0:4.4,samples=110,smooth]
+        (\x,{0.5*sin(deg(2.9*\x))*sin(deg(2.9*\x)) + 0.5*0.32*sin(deg(7.5*\x)) - 0.12});
+    \node[navy,align=center,font=\scriptsize,above] at (2.1,0.85)
+        {one orientation-invariant,\\mean-removed scalar $\tilde a[n]$};
+  \end{scope}
+\end{tikzpicture}}
+\caption{The collapse, schematically: three pose-dependent axis traces (left) are
+combined sample-by-sample into a single magnitude by Eq.~\eqref{eq:mag}, then
+mean-centred by Eq.~\eqref{eq:demean}, yielding one orientation-invariant scalar
+$\tilde a[n]$ (right). The detector's spectrum, band powers and $\FI$ all run on this
+single channel.}
+\label{fig:collapse}
+\end{figure}
+
+Figure~\ref{fig:trace} shows the same pipeline on real data: the worksheet capture
+(\code{capture1.csv}, \SI{64}{Hz}, \SI{41.4}{s}). The freeze segment is visibly a
+small, fast tremor riding on the magnitude trace -- exactly the fluctuation that
+mean-subtraction isolates and the spectrum then quantifies.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.86\linewidth]{capture1_trace}
+\caption{Real ankle magnitude over the worksheet capture (\code{capture1.csv}). The
+combined, mean-removed signal makes the freeze tremor stand out as a rapid in-place
+oscillation, distinct from the slower swing of walking and the near-flat rest segment.}
+\label{fig:trace}
+\end{figure}
+
+\begin{keyidea}
+Two cheap operations -- a square-root sum and a mean subtraction -- buy the entire
+detector its orientation- and posture-independence. They are computed once per sample
+on the SAMD21 and are the only preprocessing the $\FI$ path applies. Notably the
+detector does \emph{not} band-pass the axes first: filtering before taking the
+magnitude flattens the $\FI$ ratio so walking and freezing look alike, so the magnitude
+is deliberately formed from the raw, unfiltered axes.
+\end{keyidea}
+
+The implementation is a two-line transform; on the host it lives in the torch-free
+\code{fog.dsp} module, and on the board it is the same arithmetic in C++:
+
+\begin{lstlisting}[style=py,caption={Forming the orientation-invariant, mean-removed magnitude (\code{fog.dsp}).}]
+import numpy as np
+
+def magnitude(ax, ay, az):
+    """Orientation-invariant scalar from three accelerometer axes."""
+    return np.sqrt(ax**2 + ay**2 + az**2)
+
+def demean(a):
+    """Remove DC (gravity / posture) before spectral analysis."""
+    return a - a.mean()
+\end{lstlisting}
+
+With one clean motion signal in hand, the next chapter turns it into a spectrum and
+reads off the band powers that feed the Freeze Index.

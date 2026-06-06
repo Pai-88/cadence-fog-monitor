@@ -1,0 +1,251 @@
+% Cadence ankle FoG garment — WHOLE-PROJECT TAXONOMY / MAP.
+% A single reference that sorts every part of the project into labelled drawers,
+% all hung off one data-flow spine. Plain English; numbers stay illustrative.
+% Build:  tectonic project_map.tex
+\documentclass[11pt]{article}
+
+\usepackage{fontspec}
+\setmainfont{Helvetica Neue}
+\setmonofont{Menlo}[Scale=0.84]
+
+\usepackage[a4paper, margin=1.4cm, top=1.2cm, bottom=1.1cm]{geometry}
+\usepackage{microtype}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning}
+\usepackage[most]{tcolorbox}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{colortbl}
+\usepackage{enumitem}
+\setlist[itemize]{nosep, leftmargin=1.25em, label=\textcolor{teal}{\small$\bullet$}}
+
+% ── Palette ───────────────────────────────────────────────────────────────────
+\definecolor{teal}{HTML}{0E7C7B}
+\definecolor{tealbg}{HTML}{E7F2F1}
+\definecolor{amber}{HTML}{C9760D}
+\definecolor{amberbg}{HTML}{FBEFDB}
+\definecolor{good}{HTML}{2E7D32}
+\definecolor{goodbg}{HTML}{E6F2E6}
+\definecolor{ink}{HTML}{21302F}
+\definecolor{muted}{HTML}{6B7B7A}
+\definecolor{legacy}{HTML}{9AA7A6}
+\color{ink}
+\setlength{\parindent}{0pt}
+
+% ── A numbered category drawer ────────────────────────────────────────────────
+\newtcolorbox{cat}[2][teal]{enhanced, breakable, colback=white, colframe=#1,
+  boxrule=0.9pt, arc=3pt, left=9pt, right=9pt, top=7pt, bottom=7pt,
+  fonttitle=\bfseries\color{white}, colbacktitle=#1, coltitle=white,
+  attach boxed title to top left={xshift=8pt, yshift=-3pt},
+  boxed title style={colback=#1, arc=2pt, boxrule=0pt}, title={#2}}
+
+% Mono "in the code" tag
+\newcommand{\code}[1]{{\footnotesize\color{muted}\texttt{#1}}}
+% Inline state chips
+\newcommand{\chip}[2]{{\color{#1}\textbf{#2}}}
+
+\begin{document}
+
+% ── Title ──────────────────────────────────────────────────────────────────
+\begin{tcolorbox}[enhanced, colback=teal, colframe=teal, arc=4pt, boxrule=0pt,
+  left=14pt, right=14pt, top=9pt, bottom=9pt]
+  {\color{white}\huge\bfseries Cadence — the whole-project map}\\[3pt]
+  {\color{tealbg}\normalsize Every part of the project sorted into labelled
+  drawers, all hung off one data-flow spine. Colour key:\ \
+  \textbf{\color{tealbg}teal}=walk\, $\cdot$\, \textbf{\color{amberbg}amber}=freeze/cue\,
+  $\cdot$\, \textbf{\color{goodbg}green}=still/ok\, $\cdot$\, grey=legacy/shelved.}
+\end{tcolorbox}
+
+\vspace{5pt}
+
+% ── The spine ────────────────────────────────────────────────────────────────
+\begin{tcolorbox}[enhanced, colback=tealbg, frame hidden, arc=3pt,
+  left=8pt, right=8pt, top=8pt, bottom=6pt]
+  \begin{center}
+  \begin{tikzpicture}[
+      stage/.style={draw=teal!55, fill=white, rounded corners=3pt, text=ink,
+        align=center, text width=2.35cm, minimum height=1.0cm, font=\footnotesize\bfseries},
+      arr/.style={-{Latex[length=2.2mm]}, teal, line width=0.9pt}]
+    \node[stage] (a) {Ankle accel\\{\scriptsize\mdseries 3 axes · 64\,Hz}};
+    \node[stage, right=5.5mm of a] (b) {Band-pass\\{\scriptsize\mdseries 0.5–15\,Hz}};
+    \node[stage, right=5.5mm of b] (c) {4\,s window\\{\scriptsize\mdseries 256 samples}};
+    \node[stage, right=5.5mm of c] (d) {Decide\\{\scriptsize\mdseries CNN \emph{or} FI}};
+    \node[stage, right=5.5mm of d] (e) {Cue\\{\scriptsize\mdseries buzz + LED}};
+    \draw[arr] (a) -- (b); \draw[arr] (b) -- (c);
+    \draw[arr] (c) -- (d); \draw[arr] (d) -- (e);
+  \end{tikzpicture}
+  \end{center}
+  \vspace{-2pt}
+  {\footnotesize\color{muted}Everything below is just a \emph{part} of this spine —
+  the drawers tell you what each part is and where it lives. The cue is
+  \emph{debounced} (2 windows on / 2 off) so a one-off bump never buzzes —
+  that latched stream is what the garment actually emits.}
+\end{tcolorbox}
+
+\vspace{7pt}
+
+% ── 1. Hardware ──────────────────────────────────────────────────────────────
+\begin{cat}{\,1\ \ HARDWARE — the physical stack}
+  \begin{itemize}
+    \item \textbf{Circuit Playground Express (CPX)} — worn on the \textbf{ankle}
+      (distal lower limb, where the FoG tremor is largest). SAMD21 chip,
+      \textbf{LIS3DH} 3-axis accelerometer (the only sensor that matters here),
+      \textbf{10-pixel NeoPixel ring} (the lights), \textbf{button A} (press to calibrate),
+      on-board \textbf{vibration motor — the cue actuator}: it buzzes the rhythmic
+      stepping prompt when a freeze is detected. That buzz \emph{is} the closed loop.
+    \item \textbf{ESP32} — the radio bridge. CPX \code{--UART/Serial1-->} ESP32
+      \code{--Wi-Fi/TCP-->} laptop. The band is untethered.
+    \item \textbf{Laptop / Pi} — the TCP \emph{server} (fixed address \code{0.0.0.0:8765});
+      runs the live dashboard and the offline analysis. The ESP32 dials in as a client.
+    \item {\color{legacy}\textit{Legacy:}} direct USB tether (no ESP32) is kept only for bench bring-up.
+  \end{itemize}
+\end{cat}
+
+\vspace{6pt}
+
+% ── 2. Device modes (two minipages) ──────────────────────────────────────────
+{\large\bfseries 2\ \ TWO DEVICE MODES — the project's lineage}\\[5pt]
+\begin{minipage}[t]{0.49\textwidth}
+  \begin{tcolorbox}[enhanced, equal height group=modes, colback=white, colframe=legacy,
+    boxrule=0.9pt, arc=3pt, left=9pt, right=9pt, top=6pt, bottom=6pt]
+    {\bfseries\color{legacy}Wrist — explored, then shelved}\\[3pt]
+    \emph{Open-loop} clinical tremor monitor: watch for the 4–6\,Hz resting tremor
+    and \emph{report} it (measure-only, no buzzing back). A reasonable idea, but
+    \emph{not} what we built — kept here so the lineage stays honest.
+  \end{tcolorbox}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.49\textwidth}
+  \begin{tcolorbox}[enhanced, equal height group=modes, colback=tealbg, colframe=teal,
+    boxrule=0.9pt, arc=3pt, left=9pt, right=9pt, top=6pt, bottom=6pt]
+    {\bfseries\color{teal}Ankle — what you build \& demo}\\[3pt]
+    \emph{Closed-loop} freeze-of-gait garment: detect a freeze $\rightarrow$ fire a
+    rhythmic vibrotactile cue to help the wearer step off again. This is where the
+    CNN + Daphnet data live — the device the leaflet, worksheet and live demo are about.
+  \end{tcolorbox}
+\end{minipage}
+
+\vspace{8pt}
+
+% ── 3. Label schemes ─────────────────────────────────────────────────────────
+\begin{cat}[amber]{\,3\ \ LABEL SCHEMES — the three sets of ``categories'' (don't mix them up)}
+  \renewcommand{\arraystretch}{1.35}
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{3.6cm}
+      >{\raggedright\arraybackslash}p{2.2cm} c >{\raggedright\arraybackslash}X@{}}
+    \rowcolor{amber}
+    \textcolor{white}{\textbf{Where it lives}} & \textcolor{white}{\textbf{Called}} &
+    \textcolor{white}{\textbf{How many}} & \textcolor{white}{\textbf{The actual categories}} \\
+    \textbf{Training data}\newline {\footnotesize\color{muted}Daphnet, ankle} &
+      annotation codes & \textbf{3} &
+      {\color{legacy}\textbf{0}}=not in experiment \emph{(dropped)}\ \ $\cdot$\ \
+      \textbf{1}=no-freeze\ \ $\cdot$\ \ \textbf{2}=freeze \\
+    \rowcolor{amberbg}
+    \textbf{The ML model}\newline {\footnotesize\color{muted}1-D CNN, offline} &
+      classes & \textbf{2} & \texttt{no\_freeze}\ \ $\cdot$\ \ \texttt{freeze} \\
+    \textbf{The live band}\newline {\footnotesize\color{muted}on the ankle, demo} &
+      states & \textbf{3} &
+      \chip{teal}{WALK}\ \ $\cdot$\ \ \chip{amber}{FREEZE}\ \ $\cdot$\ \ \chip{good}{STILL} \\
+  \end{tabularx}
+  \vspace{4pt}
+  {\footnotesize\color{muted}The dataset's \textbf{3 codes} collapse into the model's
+  \textbf{2 classes} (code 0 thrown away; a 4\,s window is \texttt{freeze} if $>$50\,\%
+  of its samples are code 2). On the live band, \chip{amber}{FREEZE} \emph{is} the
+  model's call; a movement-energy gate then splits the non-freeze time into
+  \chip{teal}{WALK} (moving) and \chip{good}{STILL} (quiet limb).}
+\end{cat}
+
+\newpage
+
+% ── 4. Two ML approaches ─────────────────────────────────────────────────────
+{\large\bfseries 4\ \ TWO ML APPROACHES — how a window becomes a label}\\[5pt]
+\begin{minipage}[t]{0.49\textwidth}
+  \begin{tcolorbox}[enhanced, equal height group=ml, colback=white, colframe=ink!55,
+    boxrule=0.9pt, arc=3pt, left=9pt, right=9pt, top=6pt, bottom=6pt]
+    {\bfseries Option A — features $\rightarrow$ classic ML}\\[3pt]
+    Boil each window down to \textbf{9 hand-picked numbers} (band powers, Freeze Index,
+    tremor power, RMS, jerk\,…) then feed a \textbf{Random Forest}.
+    \\[3pt]
+    {\footnotesize\color{muted}Role: the \emph{interpretable baseline} — lets you say
+    \emph{which} feature mattered (SHAP). Not deployed.}
+  \end{tcolorbox}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.49\textwidth}
+  \begin{tcolorbox}[enhanced, equal height group=ml, colback=tealbg, colframe=teal,
+    boxrule=0.9pt, arc=3pt, left=9pt, right=9pt, top=6pt, bottom=6pt]
+    {\bfseries\color{teal} Option B — raw window $\rightarrow$ CNN \ \small(yours)}\\[3pt]
+    Feed the \textbf{raw} 3-axis window (\code{3 × 256}) straight into a small
+    \textbf{1-D CNN} (FoGNet, $\sim$18–30k params); it learns its own filters.
+    \\[3pt]
+    {\footnotesize\color{muted}Role: \emph{your trained model} — the deployed
+    detector. Its leave-one-subject-out sens / spec on Daphnet are the headline
+    ML result.}
+  \end{tcolorbox}
+\end{minipage}
+
+\vspace{8pt}
+
+% ── 5. Datasets + 6. Metrics ─────────────────────────────────────────────────
+\begin{minipage}[t]{0.49\textwidth}
+  \begin{tcolorbox}[enhanced, equal height group=dm, colback=white, colframe=teal,
+    boxrule=0.9pt, arc=3pt, left=9pt, right=9pt, top=6pt, bottom=6pt,
+    fonttitle=\bfseries\color{white}, colbacktitle=teal,
+    attach boxed title to top left={xshift=8pt, yshift=-3pt},
+    boxed title style={colback=teal, arc=2pt, boxrule=0pt}, title={\,5\ \ DATA}]
+    \begin{itemize}
+      \item \textbf{Daphnet FoG} — UCI, \emph{ankle}, 64\,Hz. The \textbf{primary} dataset; trains \& validates the CNN. \emph{Authorised to use.}
+      \item \textbf{Your own $\sim$40\,s ankle capture} (still/walk/freeze) — the honest source for the \textbf{worksheet's} headline Freeze-Index numbers.
+      \item \textbf{PADS} — PhysioNet, \emph{wrist} (Apple Watch, 100\,Hz). Only relevant to the shelved wrist branch; \emph{not downloaded}.
+    \end{itemize}
+  \end{tcolorbox}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.49\textwidth}
+  \begin{tcolorbox}[enhanced, equal height group=dm, colback=white, colframe=teal,
+    boxrule=0.9pt, arc=3pt, left=9pt, right=9pt, top=6pt, bottom=6pt,
+    fonttitle=\bfseries\color{white}, colbacktitle=teal,
+    attach boxed title to top left={xshift=8pt, yshift=-3pt},
+    boxed title style={colback=teal, arc=2pt, boxrule=0pt}, title={\,6\ \ METRICS}]
+    \begin{itemize}
+      \item \textbf{Sensitivity} — of the real events, how many did we catch? (a miss is the costly error)
+      \item \textbf{Specificity} — when nothing's happening, how often do we stay quiet? (no crying wolf)
+      \item \textbf{Confusion matrix} — the 2×2 the two rates come from.
+      \item {\color{muted}\emph{Not} accuracy — events are rare, so ``always say no'' scores $\sim$90\,\% and means nothing.}
+    \end{itemize}
+  \end{tcolorbox}
+\end{minipage}
+
+\vspace{8pt}
+
+% ── 7. Software / repo ───────────────────────────────────────────────────────
+\begin{cat}{\,7\ \ SOFTWARE — the repo, by job}
+  \begin{itemize}
+    \item \code{pi/fog/config.py} — single source of truth: sample rate, window sizes, bands, label map, protocol.
+    \item \code{pi/fog/dsp.py} — the maths: filter, magnitude, band power, Freeze Index, tremor power \emph{(torch-free)}.
+    \item \code{pi/fog/model.py} — the 1-D CNN (\texttt{FoGNet}); the \emph{only} file that imports torch.
+    \item \code{pi/fog/metrics.py} — sensitivity / specificity + the Freeze-Index baseline.
+    \item \code{colab/fog\_allinone.py} — trains the CNN + runs the full LOSO + debounce; \code{colab/pick\_threshold.py} picks the deploy threshold honestly (nested LOSO); \code{pi/make\_accuracy\_figs.py} builds the Option-A baseline + figures.
+    \item \code{firmware/variants/*.ino} — on-board code: \texttt{cpx\_fog\_*} (ankle, deployed), \texttt{cpx\_tremor\_monitor} (wrist, shelved), ESP32 bridge/hub.
+    \item \code{dashboard.html} — the live screen: states + freeze/cue badge + CSV recorder.
+    \item \code{worksheet/*.tex} — this map, the theory explainers, the demo sheet, the accuracy worksheet.
+  \end{itemize}
+\end{cat}
+
+\vspace{8pt}
+
+% ── 8. Deliverables ──────────────────────────────────────────────────────────
+\begin{cat}[amber]{\,8\ \ GRADED DELIVERABLES — due Fri (all three are marked)}
+  \begin{itemize}
+    \item \textbf{Accuracy worksheet} — headline metric is \textbf{sensitivity \& specificity},
+      \emph{not} accuracy. Numbers must be \textbf{real}: from your own ankle capture (worksheet headline) and Daphnet LOSO (the CNN).
+    \item \textbf{Leaflet / advert} — the ankle freeze-of-gait cueing garment, in plain language.
+    \item \textbf{Project Reflection} — \textbf{\color{amber}Category 1: NO AI allowed.} Write it
+      entirely yourself; any AI use is academic misconduct. (AI help on design/code is fine — this isn't.)
+  \end{itemize}
+\end{cat}
+
+\vspace{5pt}
+{\footnotesize\color{muted}\textbf{One-line filing rule:} if someone says ``the 3 categories''
+they mean the live \chip{teal}{WALK}/\chip{amber}{FREEZE}/\chip{good}{STILL} states (drawer 3, bottom row);
+``the 2 classes'' is the CNN (drawer 3, middle row); the dataset's ``3 codes'' are raw labels that
+collapse into those 2. Frequency \emph{bands} (loco / freeze / tremor) are Hz ranges used to build
+features — they are inputs, never output categories.}
+
+\end{document}

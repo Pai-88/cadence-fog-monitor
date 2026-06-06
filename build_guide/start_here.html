@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<!--
+  Source for START_HERE.pdf — the build guide for the WIRELESS version of the
+  Parkinson's closed-loop gait garment (CPX -> ESP32-S3 mini -> laptop).
+  Re-render with:
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+       --headless --print-to-pdf=START_HERE.pdf --no-pdf-header-footer start_here.html
+  Wi-Fi credentials are placeholders only — fill them in the .ino, never here.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Build Guide — Parkinson's Closed-Loop Gait Garment (Wireless)</title>
+<style>
+  @page { size: A4; margin: 13mm 14mm; }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: "Helvetica Neue", Arial, sans-serif;
+    color: #1f2933; font-size: 10.5px; line-height: 1.5; margin: 0;
+  }
+  h1, h2, h3 { margin: 0; line-height: 1.2; }
+  code, .mono { font-family: "SF Mono", "Consolas", "Menlo", monospace; }
+
+  /* ── Header band ───────────────────────────────────────────── */
+  .hero {
+    background: #0b5563; color: #fff; padding: 16px 18px; border-radius: 8px;
+    display: flex; justify-content: space-between; align-items: flex-end;
+  }
+  .hero h1 { font-size: 19px; letter-spacing: .2px; }
+  .hero .sub { color: #d6eef1; font-size: 11px; margin-top: 4px; }
+  .hero .badge {
+    background: #e8743b; color: #fff; font-size: 9.5px; font-weight: 700;
+    padding: 4px 9px; border-radius: 999px; white-space: nowrap;
+    text-transform: uppercase; letter-spacing: .4px;
+  }
+
+  /* ── Section headings ──────────────────────────────────────── */
+  h2 {
+    font-size: 13px; color: #0b5563; margin: 16px 0 7px;
+    padding-bottom: 3px; border-bottom: 2px solid #cfe3e6;
+    display: flex; align-items: center; gap: 7px;
+    page-break-after: avoid; break-after: avoid;   /* keep heading with its content */
+  }
+  h2 .n {
+    background: #0b5563; color: #fff; font-size: 10px; width: 17px; height: 17px;
+    border-radius: 50%; display: inline-flex; align-items: center;
+    justify-content: center; flex: none;
+  }
+  h3 { font-size: 11px; color: #0b5563; margin: 10px 0 4px;
+    page-break-after: avoid; break-after: avoid; }
+
+  /* ── Pipeline diagram ──────────────────────────────────────── */
+  .pipe { display: flex; align-items: stretch; gap: 0; margin: 4px 0 2px; }
+  .node {
+    flex: 1; border: 1.5px solid #0b5563; border-radius: 7px; padding: 9px 8px;
+    text-align: center; background: #f1f7f8;
+  }
+  .node .role { font-size: 8.5px; color: #5b7a80; text-transform: uppercase;
+    letter-spacing: .4px; }
+  .node b { font-size: 11.5px; color: #0b3b46; }
+  .node .det { font-size: 8.7px; color: #51626a; margin-top: 2px; }
+  .arrow { flex: none; width: 84px; display: flex; flex-direction: column;
+    justify-content: center; align-items: center; color: #0b5563; }
+  .arrow .lbl { font-size: 8px; color: #5b7a80; }
+  .arrow .up { font-size: 13px; line-height: 1; }
+  .arrow .dn { font-size: 8.5px; color: #e8743b; }
+
+  /* ── Tables ────────────────────────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; margin: 4px 0; font-size: 10px; }
+  th { background: #0b5563; color: #fff; text-align: left; padding: 5px 7px;
+    font-size: 9.5px; font-weight: 600; }
+  td { padding: 5px 7px; border-bottom: 1px solid #e0e8ea; vertical-align: top; }
+  tr:nth-child(even) td { background: #f5f9fa; }
+  .pin { font-family: "SF Mono","Consolas","Menlo",monospace; font-weight: 700;
+    color: #0b3b46; }
+  .dir { text-align: center; color: #0b5563; font-weight: 700; }
+
+  /* ── Cards / callouts ──────────────────────────────────────── */
+  .grid2 { display: flex; gap: 12px; }
+  .grid2 > * { flex: 1; }
+  .card { background: #f5f9fa; border: 1px solid #d9e6e8; border-radius: 7px;
+    padding: 9px 11px; }
+  .note { border-left: 3px solid #0b5563; background: #eef5f6; padding: 7px 10px;
+    border-radius: 0 5px 5px 0; margin: 6px 0; }
+  .warn { border-left: 3px solid #e8743b; background: #fdf1ea; padding: 7px 10px;
+    border-radius: 0 5px 5px 0; margin: 6px 0; }
+  .warn b, .note b { color: #0b3b46; }
+  ul, ol { margin: 4px 0; padding-left: 18px; }
+  li { margin: 2.5px 0; }
+  .kbd { background: #1f2933; color: #fff; padding: 1px 5px; border-radius: 4px;
+    font-family: "SF Mono","Consolas","Menlo",monospace; font-size: 9px; }
+  .avoid { page-break-inside: avoid; }
+  .foot { margin-top: 14px; padding-top: 7px; border-top: 1px solid #d9e6e8;
+    color: #7a8a90; font-size: 8.7px; display: flex; justify-content: space-between; }
+</style>
+</head>
+<body>
+
+  <div class="hero">
+    <div>
+      <h1>Closed-Loop Gait Garment &mdash; Build Guide</h1>
+      <div class="sub">Wireless version &middot; CPX &rarr; ESP32-S3 mini &rarr; laptop &middot; ENGF0031 Scenario 2</div>
+    </div>
+    <div class="badge">Start&nbsp;Here</div>
+  </div>
+
+  <!-- ── 1 · Architecture ─────────────────────────────────────── -->
+  <h2><span class="n">1</span>How it fits together</h2>
+  <p style="margin:2px 0 6px">
+    One accelerometer in, one vibration motor out. The Circuit Playground Express (CPX)
+    senses gait and drives the cue; an <b>ESP32-S3 mini</b> is a transparent UART&hairsp;&rlarr;&hairsp;Wi-Fi
+    bridge; the <b>laptop</b> runs the freeze-detection CNN and the dashboard. The return
+    path (cue&nbsp;command&nbsp;&rarr;&nbsp;motor) is what makes it <b>closed-loop</b>, not just a logger.
+  </p>
+  <div class="pipe avoid">
+    <div class="node">
+      <div class="role">Sense + cue</div>
+      <b>CPX</b>
+      <div class="det">LIS3DH accel @ 64&nbsp;Hz<br>motor on pad A1</div>
+    </div>
+    <div class="arrow">
+      <div class="lbl">UART 115200</div>
+      <div class="up">&rarr;</div>
+      <div class="dn">&larr; 'C' / 'S'</div>
+    </div>
+    <div class="node">
+      <div class="role">Bridge</div>
+      <b>ESP32-S3 mini</b>
+      <div class="det">UART &rlarr; Wi-Fi/TCP<br>no processing</div>
+    </div>
+    <div class="arrow">
+      <div class="lbl">Wi-Fi / TCP :8765</div>
+      <div class="up">&rarr;</div>
+      <div class="dn">&larr; cue cmd</div>
+    </div>
+    <div class="node">
+      <div class="role">Brain + UI</div>
+      <b>Laptop</b>
+      <div class="det">CNN + dashboard<br>TCP <b>server</b></div>
+    </div>
+  </div>
+  <div class="note avoid">
+    <b>Who dials whom:</b> the laptop is the TCP <b>server</b> (binds <span class="mono">0.0.0.0:8765</span>);
+    the ESP32 is the <b>client</b> and connects out to the laptop's IP. A phone hotspot supplies
+    the network. Same byte protocol as the old USB cable &mdash; only the wire changed, so the CNN
+    and dashboard are unchanged.
+  </div>
+
+  <!-- ── 2 · Wiring & pins ────────────────────────────────────── -->
+  <h2><span class="n">2</span>Wiring &amp; pin connections</h2>
+  <h3>CPX &rlarr; ESP32-S3 mini &mdash; the UART link (3 wires)</h3>
+  <table class="avoid">
+    <tr><th>Signal</th><th>CPX pad</th><th class="dir">&nbsp;</th><th>ESP32-S3 GPIO</th><th>S3 pad</th><th>Notes</th></tr>
+    <tr>
+      <td>Accel data&nbsp;(up)</td>
+      <td class="pin">A7 &middot; Serial1 TX</td>
+      <td class="dir">&rarr;</td>
+      <td class="pin">GPIO5 &middot; RX2</td>
+      <td class="pin">D4</td>
+      <td>CPX transmits, ESP32 receives</td>
+    </tr>
+    <tr>
+      <td>Cue&nbsp;'C'/'S'&nbsp;(down)</td>
+      <td class="pin">A6 &middot; Serial1 RX</td>
+      <td class="dir">&larr;</td>
+      <td class="pin">GPIO6 &middot; TX2</td>
+      <td class="pin">D5</td>
+      <td>ESP32 transmits, CPX receives</td>
+    </tr>
+    <tr>
+      <td>Ground</td>
+      <td class="pin">GND</td>
+      <td class="dir">&mdash;</td>
+      <td class="pin">GND</td>
+      <td class="pin">GND</td>
+      <td><b>Common ground &mdash; mandatory</b></td>
+    </tr>
+  </table>
+  <div class="warn avoid">
+    <b>TX&nbsp;and&nbsp;RX&nbsp;cross&nbsp;over</b> (one board's TX &rarr; the other's RX). Both boards are 3.3&nbsp;V logic,
+    so the lines connect <b>directly &mdash; no level shifter</b>. <b>Power each board from its own 5&nbsp;V</b>
+    (USB power bank / battery); share <b>only</b> the ground &mdash; do <b>not</b> also link the two 3.3&nbsp;V rails.
+  </div>
+  <div class="note avoid" style="margin-top:6px">
+    <b>Other ESP32 modules:</b> the S3 has a GPIO matrix, so <span class="mono">Serial2</span> can route to GPIO5/6
+    (pads D4/D5). On a <b>WROOM DevKitC</b> use <span class="mono">GPIO16/17</span> instead; on a WROVER (PSRAM uses
+    16/17) pick two free GPIOs and edit <span class="mono">RXD2/TXD2</span> in the sketch. The ESP32 status LED
+    (<span class="mono">GPIO2</span>) is <b>solid when linked</b> to the laptop, <b>blinking while connecting</b>.
+  </div>
+
+  <h3>Vibration motor &mdash; on the CPX (pad A1, via an NPN transistor)</h3>
+  <div class="grid2 avoid">
+    <table style="margin:0">
+      <tr><th>From</th><th class="dir">&nbsp;</th><th>To</th></tr>
+      <tr><td class="pin">A1</td><td class="dir">&rarr; 1&nbsp;k&Omega; &rarr;</td><td class="pin">transistor base</td></tr>
+      <tr><td class="pin">motor (+)</td><td class="dir">&mdash;</td><td class="pin">VOUT (3.3&nbsp;V)</td></tr>
+      <tr><td class="pin">motor (&minus;)</td><td class="dir">&mdash;</td><td class="pin">collector</td></tr>
+      <tr><td class="pin">emitter</td><td class="dir">&mdash;</td><td class="pin">GND</td></tr>
+    </table>
+    <div class="card" style="margin:0">
+      <b>Why a transistor?</b> A CPX pad can't source the ~90&nbsp;mA a motor needs, so A1 just
+      switches an NPN (2N2222 / BC547).
+      <ul style="margin-top:5px">
+        <li>Add a <b>1N4148 flyback diode</b> across the motor (cathode&nbsp;&rarr;&nbsp;VOUT).</li>
+        <li><b>Avoid pad A0</b> &mdash; it is the onboard speaker / DAC pin.</li>
+        <li>The 10 NeoPixels mirror the cue (red pulse) for the demo.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── 3 · Flash & run ──────────────────────────────────────── -->
+  <h2><span class="n">3</span>Flash &amp; run</h2>
+  <div class="grid2 avoid">
+    <div class="card">
+      <h3 style="margin-top:0">a &middot; Flash the CPX</h3>
+      <ol>
+        <li>Arduino IDE: install <b>Adafruit SAMD Boards</b> + the <b>Adafruit Circuit Playground</b> library.</li>
+        <li>Open <span class="mono">firmware/cpx_fog_streamer/<wbr>cpx_fog_streamer.ino</span>.</li>
+        <li>Board = <b>Adafruit Circuit Playground Express</b> &rarr; Upload.</li>
+      </ol>
+      <h3>b &middot; Flash the ESP32-S3</h3>
+      <ol>
+        <li>Install <b>esp32 by Espressif</b> boards.</li>
+        <li>Open <span class="mono">firmware/esp32_wifi_bridge/<wbr>esp32_wifi_bridge.ino</span> and set
+            <span class="mono">WIFI_SSID</span>, <span class="mono">WIFI_PASS</span> (your hotspot) and
+            <span class="mono">HOST_IP</span> = the laptop's IP.</li>
+        <li>Board = <b>ESP32S3 Dev Module</b>, <b>USB CDC On Boot = Enabled</b> &rarr; Upload.</li>
+      </ol>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">c &middot; Run on the laptop</h3>
+      <p style="margin:2px 0 5px">Find the laptop IP on the hotspot (put it in <span class="mono">HOST_IP</span>):</p>
+      <p style="margin:3px 0"><span class="kbd">ipconfig getifaddr en0</span> <span style="color:#7a8a90">&rarr; e.g. 192.168.1.50</span></p>
+      <p style="margin:7px 0 4px">Then, in the <span class="mono">pi/</span> folder:</p>
+      <p style="margin:3px 0"><span class="kbd">pip install fastapi 'uvicorn[standard]' scipy numpy torch</span></p>
+      <p style="margin:3px 0"><span class="kbd">python dashboard_server.py</span></p>
+      <p style="margin:3px 0 7px">Open <span class="mono">http://localhost:8000/</span> in a browser.</p>
+      <div class="note" style="margin:0">
+        <b>No hardware?</b> Dry-run the whole pipeline from recorded data:<br>
+        <span class="kbd">python dashboard_server.py --replay &lt;daphnet&gt;/S01R01.txt</span>
+      </div>
+    </div>
+  </div>
+  <div class="warn avoid">
+    <b>Order on the day:</b> phone hotspot on &rarr; laptop server running &rarr; power both boards.
+    When the ESP32 LED goes <b>solid</b>, the link is up and the dashboard starts moving.
+  </div>
+
+  <!-- ── 4 · Troubleshooting ──────────────────────────────────── -->
+  <h2><span class="n">4</span>If it won't link</h2>
+  <table class="avoid">
+    <tr><th>Symptom</th><th>Fix</th></tr>
+    <tr>
+      <td>ESP32 never sees the hotspot SSID</td>
+      <td>On iPhone, turn <b>Maximize Compatibility ON</b> (forces 2.4&nbsp;GHz). Every ESP32 is 2.4&nbsp;GHz only.</td>
+    </tr>
+    <tr>
+      <td>Wi-Fi joins, but the dashboard shows no data</td>
+      <td>Let macOS <b>allow incoming TCP 8765</b> (Firewall), and check <span class="mono">HOST_IP</span> matches
+          <span class="mono">ipconfig getifaddr en0</span> (172.20.10.x on an iPhone hotspot).</td>
+    </tr>
+    <tr>
+      <td>ESP32 LED blinks forever</td>
+      <td>Wrong <span class="mono">WIFI_SSID/PASS</span>, the laptop server isn't running, or <span class="mono">HOST_IP</span> is wrong.</td>
+    </tr>
+    <tr>
+      <td>Linked, but no <span class="mono">ax,ay,az</span> lines</td>
+      <td>TX/RX not crossed, or no common ground. Re-check the table in &sect;2.</td>
+    </tr>
+  </table>
+
+  <div class="foot">
+    <span>Canonical code: <span class="mono">firmware/cpx_fog_streamer/</span> &middot; <span class="mono">firmware/esp32_wifi_bridge/</span> &middot; <span class="mono">pi/dashboard_server.py</span> &middot; <span class="mono">pi/train_fog.py</span></span>
+    <span>Wi-Fi credentials live in the .ino only &mdash; never commit real ones.</span>
+  </div>
+
+</body>
+</html>

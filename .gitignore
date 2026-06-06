@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Internal notes / backups / archived duplicates — not for the public repo
+_audit_backup_*/
+**/_archive_stale*/
+**/_inspect/
+CADENCE_AUDIT.txt
+
+# Auto-generated capture plots/outputs (regenerate with the analysis tools)
+recordings/*_axes.png
+recordings/*_plain.png
+recordings/*_inferred.png
+recordings/*_predicted.png
+recordings/*_truth_vs_pred.png
+recordings/*_detector.png
+recordings/*_freeze_zoom.png
+recordings/*_interactive.html
+
+# LaTeX build cruft
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz

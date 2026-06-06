@@ -1,0 +1,253 @@
+\section{Band Power \& the Freeze Index}
+\label{sec:freeze-index}
+
+The previous stage handed us a Welch power spectral density (PSD): a curve that
+says \emph{how much} of the leg's motion lives at each frequency. A spectrum is rich,
+but a state machine cannot act on a whole curve --- it needs a single number it can
+compare against a threshold. This section reduces the spectrum to exactly that number,
+the \textbf{Freeze Index}, by first collapsing the curve into a handful of
+\emph{band powers} and then taking a ratio of two of them. The ratio is the small,
+quietly clever idea that lets a \$30 board tell a freeze from ordinary walking.
+
+\begin{intuition}
+Walking and freezing both shake the ankle --- the difference is \emph{where} in the
+frequency spectrum the energy sits. A walking stride is a slow, heavy rhythm
+(roughly one to three steps a second); a freeze is a fast, fluttering tremor of the
+feet \emph{in place} at 3--8\,Hz. So we do not ask ``how hard is the leg moving?''
+(walking wins that contest) --- we ask ``what \emph{fraction} of the shaking is fast?''.
+The Freeze Index is precisely that fraction expressed as a ratio, and it flips
+decisively the moment a freeze begins.
+\end{intuition}
+
+\subsection{From a spectrum to a band power}
+
+The PSD $S(f)$ tells us the motion's power density (power per hertz) at every
+frequency bin. We rarely care about one bin in isolation; we care about a whole
+\emph{band} of physiologically meaningful frequencies. The \textbf{band power} over a
+band $[f_1,f_2]$ is simply the PSD summed across the bins that fall inside it:
+%
+\begin{equation}
+P[f_1,f_2] \;=\; \sum_{k\,:\, f_1 \le f_k \le f_2} S(f_k)\,,
+\qquad f_k = k\,\Delta f,\quad \Delta f = \frac{f_s}{N} = \frac{64}{256}=\SI{0.25}{\hertz}.
+\label{eq:bandpower}
+\end{equation}
+%
+Because the window is $N=256$ samples (\SI{4.0}{\second}) at $f_s = \SI{64}{\hertz}$,
+the bins are spaced $\Delta f = \SI{0.25}{\hertz}$ apart --- fine enough to slice the
+spectrum cleanly into the three bands that matter clinically.
+
+\begin{table}[H]
+\centering
+\caption{The three frequency bands Cadence reads off the mean-removed magnitude
+spectrum. Each band is a contiguous run of \SI{0.25}{\hertz} PSD bins summed via
+Eq.~\eqref{eq:bandpower}.}
+\label{tab:bands}
+\small
+\begin{tabular}{@{}llp{7.6cm}@{}}
+\toprule
+\textbf{Band} & \textbf{Range} & \textbf{What lives there} \\
+\midrule
+Locomotor & \SI{0.5}{}--\SI{3}{\hertz} & the walking rhythm: stride and step cadence,
+the heavy slow swing of normal gait. \\
+Freeze & \SI{3}{}--\SI{8}{\hertz} & the tell-tale rapid trembling/shuffling of the
+feet \emph{in place} during a freeze episode. \\
+Rest-tremor & \SI{4}{}--\SI{6}{\hertz} & Parkinsonian rest tremor; reported on the
+dashboard as context, not used in the index. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{keyidea}
+Every band power in Eq.~\eqref{eq:bandpower} is taken on the \emph{mean-removed
+magnitude} $a=\norm{(a_x,a_y,a_z)}$, with its average subtracted. Combining the three
+axes makes the measure orientation-invariant (the sleeve can rotate on the ankle);
+subtracting the mean strips out gravity's $\sim\!1\,g$ DC offset so it never
+contaminates the low band. We are left with pure \emph{motion} power, ready to slice.
+\end{keyidea}
+
+\subsection{The Freeze Index: a ratio of two bands}
+
+Moore \emph{et al.} (2008) defined the Freeze Index as the power in the freeze band
+divided by the power in the locomotor band:
+%
+\begin{equation}
+\FI \;=\; \frac{P[\,\SI{3}{}\text{--}\SI{8}{\hertz}\,]}
+              {P[\,\SI{0.5}{}\text{--}\SI{3}{\hertz}\,] + \varepsilon}\,,
+\qquad \varepsilon = 10^{-9}.
+\label{eq:freezeindex}
+\end{equation}
+%
+The numerator is the energy of the fast freeze tremor; the denominator is the energy
+of the slow walking rhythm. A tiny guard $\varepsilon = 10^{-9}$ is added to the
+denominator so a perfectly still leg --- whose locomotor power can round to zero ---
+never triggers a divide-by-zero. It is far below any real band power, so it changes no
+genuine reading; it only tames the $0/0$ corner case.
+
+\begin{mathsbox}
+Read Eq.~\eqref{eq:freezeindex} as a competition between two bands.
+\begin{itemize}
+\item \textbf{Walking:} the slow stride dominates, so the denominator
+$P[0.5\text{--}3]$ is large and the numerator is small $\Rightarrow \FI < 1$ to
+$\sim\!1$.
+\item \textbf{Freezing:} the fast 3--8\,Hz tremor dominates, so the numerator swells
+and the denominator collapses $\Rightarrow \FI \gg 1$.
+\end{itemize}
+The index does not measure \emph{how much} the leg moves --- it measures the
+\textbf{shape} of the spectrum, the balance of fast energy against slow energy. That
+is why a ratio, not a difference, is the right tool: a difference would still be
+dominated by amplitude.
+\end{mathsbox}
+
+\subsubsection*{Why a ratio? Scale-invariance.}
+
+Suppose we measured acceleration in milli-$g$ on the host but in $\si{\meter\per\square\second}$
+on-device --- a constant factor $c$ between the two unit systems. Power scales with the
+\emph{square} of amplitude, so \emph{every} PSD bin, and hence both band powers, pick
+up the same factor $c^2$:
+%
+\begin{equation}
+\FI \;=\; \frac{c^2\,P[\,\SI{3}{}\text{--}\SI{8}{}\,]}
+                {c^2\,P[\,\SI{0.5}{}\text{--}\SI{3}{}\,]}
+       \;=\; \frac{P[\,\SI{3}{}\text{--}\SI{8}{}\,]}{P[\,\SI{0.5}{}\text{--}\SI{3}{}\,]}\,.
+\label{eq:scaleinv}
+\end{equation}
+%
+The factor cancels top and bottom. The Freeze Index is therefore
+\textbf{scale-invariant}: it returns the same value whether the firmware works in
+milli-$g$ or $\si{\meter\per\square\second}$, and the same value for a heavy stamp or a
+light shuffle of the \emph{same spectral shape}. Amplitude is normalised away by
+construction, leaving only the quantity we actually care about --- the proportion of
+fast tremor.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.95\textwidth}{!}{%
+\begin{tikzpicture}
+  \begin{groupplot}[
+      group style={group size=2 by 1, horizontal sep=2.2cm},
+      width=8.2cm, height=6.0cm,
+      xmin=0, xmax=9, ymin=0, ymax=1.05,
+      xlabel={frequency (Hz)}, ylabel={PSD $S(f)$ (normalised)},
+      xtick={0,2,4,6,8}, ytick=\empty,
+      tick label style={font=\small}, label style={font=\small},
+      title style={font=\bfseries\small, color=ink},
+      axis line style={mute}, every axis/.append style={font=\small},
+    ]
+    % ---------- WALKING ----------
+    \nextgroupplot[title={Walking: slow band tall}]
+      % locomotor band shade 0.5-3
+      \fill[grn!18] (axis cs:0.5,0) rectangle (axis cs:3,1.05);
+      % freeze band shade 3-8
+      \fill[freeze!12] (axis cs:3,0) rectangle (axis cs:8,1.05);
+      % spectrum: big peak near 1.6 Hz, small ripple in freeze band
+      \addplot[navy, very thick, smooth, domain=0.2:9, samples=180]
+        { exp(-((x-1.6)^2)/0.55) + 0.07*exp(-((x-4.6)^2)/1.2) };
+      \node[grn!60!black, font=\scriptsize\bfseries] at (axis cs:1.7,0.93) {loco};
+      \node[freeze!70!black, font=\scriptsize\bfseries] at (axis cs:5.5,0.18) {freeze};
+      \node[anchor=south east, font=\scriptsize\bfseries, navy]
+        at (axis cs:8.8,0.40) {$\FI \approx 0.5\text{--}1$};
+    % ---------- FREEZING ----------
+    \nextgroupplot[title={Freezing: fast band tall}]
+      \fill[grn!18] (axis cs:0.5,0) rectangle (axis cs:3,1.05);
+      \fill[freeze!12] (axis cs:3,0) rectangle (axis cs:8,1.05);
+      % spectrum: small loco, big peak near 5 Hz
+      \addplot[navy, very thick, smooth, domain=0.2:9, samples=180]
+        { 0.16*exp(-((x-1.6)^2)/0.55) + exp(-((x-5.0)^2)/0.9) };
+      \node[grn!60!black, font=\scriptsize\bfseries] at (axis cs:1.7,0.30) {loco};
+      \node[freeze!70!black, font=\scriptsize\bfseries] at (axis cs:5.0,0.93) {freeze};
+      \node[anchor=south east, font=\scriptsize\bfseries, freeze]
+        at (axis cs:8.8,0.55) {$\FI \gg 1$};
+  \end{groupplot}
+\end{tikzpicture}}
+\caption{The Freeze Index reads the \emph{shape} of the spectrum. In walking (left)
+the energy piles up in the green locomotor band (0.5--3\,Hz), so the ratio
+freeze$/$loco stays near or below one. In a freeze (right) the energy migrates into
+the red 3--8\,Hz band, the denominator collapses and the numerator swells, and the
+ratio flips far above one. Amplitude (overall height) is irrelevant --- only the
+balance between the two shaded areas drives $\FI$.}
+\label{fig:two-spectra}
+\end{figure}
+
+\subsection{What it does on real data}
+
+Figure~\ref{fig:two-spectra} is the cartoon; Figure~\ref{fig:fi-real} is the truth.
+The capture \code{capture1.csv} (\SI{64}{\hertz}, \SI{41.4}{\second}) walks the ankle
+through four scripted phases --- still, walk, freeze, walk --- and we compute $\FI$ on
+every \SI{4}{\second} window. The contrast is exactly what
+Eq.~\eqref{eq:freezeindex} predicts.
+
+\begin{table}[H]
+\centering
+\caption{Real per-phase Freeze Index on \code{capture1.csv}. The freeze phase is an
+order of magnitude above quiet standing and ordinary walking, and its peak windows
+soar past 20.}
+\label{tab:fi-phases}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Phase} & \textbf{Mean $\FI$} & \textbf{Median $\FI$} & \textbf{Max $\FI$} \\
+\midrule
+Still (rest) & $\sim 1.1$ & --- & $1.71$ \\
+Walk         & $\sim 1.2$ & --- & $2.08$ \\
+\textbf{Freeze} & $\mathbf{6.89}$ & $4.45$ & $\mathbf{21.35}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two features deserve a careful eye. First, still and walk sit close together
+($\sim\!1.1$ versus $\sim\!1.2$): \textbf{walking is not what trips the index}. Both
+are quiet in the freeze band, so both keep $\FI$ near one. Second, the gap to the
+freeze phase is enormous --- a mean of $6.89$ and a maximum of $21.35$, roughly six
+times higher than either calm phase. That separation is what makes a single scalar
+threshold viable.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\linewidth]{fi_per_phase}
+\caption{Measured Freeze Index per scripted phase of \code{capture1.csv} (still / walk
+/ freeze / walk). Bars are the mean $\FI$ in each phase; the grey ticks mark the
+per-phase maximum (the freeze phase peaks at $21.35$, off the top of the calm bars).
+Still and walk hug the deployed threshold line; the freeze phase towers over it. The
+gap, not the absolute height, is what a detector exploits.}
+\label{fig:fi-real}
+\end{figure}
+
+\begin{intuition}
+Notice how flat the two calm bars are next to the freeze bar. If we had used a
+\emph{difference} of band powers instead of a ratio, a vigorous walk could rack up
+large freeze-band energy in absolute terms and look alarming. The ratio refuses to be
+fooled: a vigorous walk \emph{also} has large locomotor energy, so the fraction stays
+low. Only when the spectral balance genuinely tips toward 3--8\,Hz --- a real freeze
+--- does the number climb.
+\end{intuition}
+
+\subsection{A scalar the state machine can act on}
+
+The Freeze Index turns a four-second spectrum into one comparable number, refreshed
+every two seconds as the window hops. Downstream, a window is flagged as a candidate
+freeze when $\FI$ crosses a trip line (the deployed value, $1.815$, sits just above
+the calm-phase maxima of $1.71$ and $2.08$ so that genuine freezes clear it). On the
+live dashboard the same quantity drives the \emph{Freeze Index} readout (walk
+$\sim\!0.5$--$1$; freeze $>2$, up to $20{+}$) and the \emph{Freeze Margin} meter, which
+expresses $\FI$ as a percentage of that $1.815$ trip line. One ratio, computed once
+per window, feeds the verdict, the margin meter, and the threshold sweep alike.
+
+It is worth being explicit about what the index does \emph{not} settle on its own. A
+large $\FI$ means the spectrum is freeze-shaped, but a near-motionless leg can produce
+a freeze-shaped spectrum out of pure sensor noise --- a few micro-$g$ of jitter, mostly
+high-frequency, divided by an almost-empty locomotor band. The $\varepsilon$ guard
+keeps that quotient finite, but it does not keep it \emph{small}. The Freeze Index
+alone would therefore raise false alarms whenever the wearer simply stands still. For
+that reason Cadence never trusts $\FI$ in isolation: it is paired with a separate
+\emph{movement-energy} gate that asks whether the leg is moving at all before the ratio
+is allowed to vote. That gate, the threshold sweep that sets the $1.815$ trip line, and
+the two-window debounce are the subject of the sections that follow; here it is enough
+that the spectrum has been distilled into a single, honest, scale-invariant number.
+
+\begin{takeaway}
+The Freeze Index is one scale-invariant ratio --- fast-band power over slow-band power
+--- that ignores how \emph{hard} the leg moves and reports only the \emph{shape} of its
+motion. On real capture data it stays near $1.1$--$1.2$ for standing and walking but
+leaps to a mean of $6.89$ (max $21.35$) during a freeze, giving the detector a clean,
+single-number signal to act on.
+\end{takeaway}

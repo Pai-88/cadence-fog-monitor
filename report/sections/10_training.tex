@@ -1,0 +1,333 @@
+\section{Training the CNN: Loss, Gradient Descent \& Generalisation}
+\label{sec:training}
+
+The shipped Cadence monitor decides freeze episodes with a transparent freeze-index
+rule. The CNN of the previous section --- \emph{FoGNet}, a 1-D convolutional network
+of roughly \num{18000} parameters --- is the ``given more time'' upgrade: instead of
+hand-reading one ratio, it \emph{learns} from data what a freeze window looks like.
+But a network with eighteen thousand free numbers does not know anything at birth; it
+has to be \emph{taught}. This section is the story of that teaching. We need three
+ingredients: a way to turn the network's raw opinion into a probability (the
+\textbf{sigmoid}), a way to score how wrong that probability is (the \textbf{loss}),
+and a way to nudge the eighteen thousand numbers so the score improves (\textbf{gradient
+descent}). Then comes the part that actually decides whether the model is trustworthy:
+\textbf{how we evaluate it} without fooling ourselves.
+
+\begin{intuition}
+Training is just \emph{practising with an answer key}. We show FoGNet thousands of
+4-second accelerometer windows from real Parkinson's patients, each stamped
+``freeze'' or ``calm'' by a clinician. For every window the network guesses, we measure
+how badly it guessed, and we adjust its internal knobs a hair in the direction that
+would have made the guess better. Repeat a few hundred thousand times and the knobs
+settle into a configuration that recognises freezing it has never seen before.
+\end{intuition}
+
+\subsection{From a raw score to a probability: the sigmoid}
+
+FoGNet's final layer emits two raw numbers --- one \emph{logit} arguing ``freeze'',
+one arguing ``calm''. Their difference $z = z_{\text{freeze}} - z_{\text{calm}}$ is a
+single signed score: positive leans freeze, negative leans calm, zero is a coin-flip.
+A score is not yet a probability, though --- $z$ can be any real number, while a
+probability must live in $[0,1]$. The \textbf{sigmoid} (equivalently, the 2-class
+\emph{softmax}) is the squashing function that maps the whole real line onto that
+interval:
+\begin{equation}
+\hat{p} \;=\; P(\text{freeze}\mid \text{window}) \;=\; \sigma(z) \;=\; \frac{1}{1+e^{-z}}.
+\label{eq:sigmoid}
+\end{equation}
+A large positive logit gives $\hat p \to 1$; a large negative one gives $\hat p \to 0$;
+and $z=0$ sits exactly at $\hat p = 0.5$. The final ``freeze / calm'' call is made by
+comparing $\hat p$ against a decision threshold $t$ --- and, crucially, $t$ need
+\emph{not} be $0.5$. Because a missed freeze is far costlier than a false alarm, we are
+free to slide $t$ downward to favour sensitivity, exactly as the shipped FI rule biases
+its trip line. Choosing $t$ honestly is the subject of the calibration discussion at
+the end of this section.
+
+Figure~\ref{fig:sigmoid_bce} (left) shows the curve. Two features matter for what
+follows. First, the steep middle: near $z=0$ a small change in the score moves the
+probability a lot, so the network can be \emph{decisive}. Second, the flat tails: once
+$z$ is far from zero the curve \emph{saturates} and its slope approaches zero. A flat
+slope means a near-zero gradient, and a near-zero gradient means almost no learning
+signal --- a fact that will return when we discuss how training can stall.
+
+\begin{figure}[t]
+  \centering
+  \begin{subfigure}[t]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{sigmoid}
+    \caption{The sigmoid maps any score $z$ to a probability in $[0,1]$; it is steep
+    in the middle (decisive) and flat in the tails (saturated, gradient $\approx 0$).}
+    \label{fig:sigmoid}
+  \end{subfigure}\hfill
+  \begin{subfigure}[t]{0.49\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{bce_loss}
+    \caption{Binary cross-entropy. Being confidently \emph{wrong} ($\hat p$ near the
+    opposite label) sends the loss towards infinity; being confidently \emph{right}
+    costs almost nothing.}
+    \label{fig:bce}
+  \end{subfigure}
+  \caption{The two functions that turn ``guessing'' into ``learning''. The sigmoid
+  (left) produces a probability; binary cross-entropy (right) prices how bad that
+  probability is given the true label.}
+  \label{fig:sigmoid_bce}
+\end{figure}
+
+\subsection{The loss: punishing confident mistakes}
+
+We now need a number that says \emph{how wrong} a probability $\hat p$ is, given the
+true label $y \in \{0,1\}$ ($y=1$ for a real freeze window, $y=0$ for calm gait).
+FoGNet is trained with \textbf{binary cross-entropy} (BCE), also called log-loss:
+\begin{equation}
+\mathcal{L}(\hat p, y) \;=\; -\Big[\, y\,\log \hat p \;+\; (1-y)\,\log(1-\hat p)\,\Big].
+\label{eq:bce}
+\end{equation}
+
+\begin{mathsbox}
+Equation~\eqref{eq:bce} looks like two terms, but for any single window only one of
+them is ever ``on'', because $y$ is either $0$ or $1$.
+\begin{itemize}
+  \item \textbf{A true freeze ($y=1$).} The second term vanishes and the loss collapses
+  to $\mathcal{L} = -\log \hat p$. If the network correctly said $\hat p = 0.99$, the
+  loss is $-\log(0.99)\approx 0.01$ --- almost free. If it confidently insisted
+  ``calm'' with $\hat p = 0.01$, the loss is $-\log(0.01)\approx 4.6$ --- a huge
+  penalty.
+  \item \textbf{A calm window ($y=0$).} Now the first term vanishes and
+  $\mathcal{L} = -\log(1-\hat p)$, which is the mirror image: cheap when $\hat p$ is
+  near $0$, explosive when the network falsely cries ``freeze''.
+\end{itemize}
+The $\log$ is what makes BCE the right tool. A plain squared-error would mildly scold a
+confident blunder; the logarithm makes the penalty diverge to $+\infty$ as $\hat p$
+heads to the \emph{wrong} certainty. The network therefore learns not just to be right,
+but to be \emph{calibrated} --- to reserve its confidence for cases that deserve it.
+\end{mathsbox}
+
+Figure~\ref{fig:sigmoid_bce} (right) draws both branches. The training objective is the
+\emph{average} of Equation~\eqref{eq:bce} over the whole batch of labelled windows; that
+single scalar is what the optimiser tries to push downhill.
+
+\begin{intuition}
+BCE is a teacher who marks two things at once: \emph{was the answer right}, and
+\emph{how sure were you}. A hesitant wrong answer is forgiven; a confident wrong answer
+is hammered. That is precisely the behaviour we want from a fall-risk monitor --- a
+model that shouts ``freeze!'' must have earned the right to shout.
+\end{intuition}
+
+\subsection{Gradient descent: rolling the weights downhill}
+
+The loss is a function of the network's \num{18000} weights: change a weight, and the
+average loss changes. Picture those weights as coordinates on a vast, hilly landscape
+whose \emph{height} is the loss. Training is the search for the lowest valley.
+\textbf{Backpropagation} (the chain rule applied layer by layer) computes the
+\emph{gradient} $\nabla_{\!\boldsymbol\theta}\mathcal{L}$ --- the direction of steepest
+\emph{uphill} at the current spot. To go down, we step the opposite way:
+\begin{equation}
+\boldsymbol\theta \;\leftarrow\; \boldsymbol\theta \;-\; \eta\,
+\nabla_{\!\boldsymbol\theta}\mathcal{L},
+\label{eq:sgd}
+\end{equation}
+where $\boldsymbol\theta$ collects all the weights and $\eta$ is the
+\textbf{learning rate} --- the size of each step. (Cadence trains with the AdamW
+optimiser, a refined cousin of Equation~\eqref{eq:sgd} that adapts the step per weight,
+but the ``roll downhill'' picture is identical.) Repeat the read-the-slope /
+take-a-step loop over many \emph{epochs} --- one epoch being a full pass over the
+training windows --- and the weights descend towards a good valley.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.74\textwidth]{gradient_descent}
+  \caption{Gradient descent on a 2-D cartoon of the loss surface (the real surface is
+  $\sim$\num{18000}-dimensional). The contours are loss; the star is the best weights.
+  A learning rate too small \emph{crawls}; one too large \emph{zig-zags} and may never
+  settle; a well-chosen rate \emph{converges} straight to the minimum.}
+  \label{fig:gd}
+\end{figure}
+
+Figure~\ref{fig:gd} makes the role of the learning rate vivid. If $\eta$ is too small
+the optimiser inches along and may run out of epochs before reaching the valley. If
+$\eta$ is too large it overshoots, ricochets across the basin and can diverge. The
+``good rate'' path walks almost straight to the star. This is also where the saturated
+sigmoid tails of Figure~\ref{fig:sigmoid} bite: where the curve is flat the gradient is
+tiny, the step in Equation~\eqref{eq:sgd} barely moves, and learning crawls --- one
+reason normalisation layers (below) are used to keep activations in the lively middle
+of the curve.
+
+\begin{takeaway}
+Loss says \emph{how wrong}; the gradient says \emph{which way is wrong}; the learning
+rate says \emph{how big a correction to make}. Iterate, and eighteen thousand random
+numbers turn into a freeze detector.
+\end{takeaway}
+
+\subsection{Over-fitting and the regularisers}
+
+A network with \num{18000} parameters is powerful enough to \emph{memorise} its training
+windows --- including their noise and the quirks of the particular patients it saw.
+A memoriser scores beautifully on data it has already seen and fails on anyone new;
+this is \textbf{over-fitting}. FoGNet leans on two built-in defences, visible in its
+architecture:
+\begin{itemize}
+  \item \textbf{Dropout (rate 0.3)} in the classifier head. During training, a random
+  $30\%$ of the units are switched off on each pass, so no single neuron can become a
+  load-bearing memoriser; the network is forced to spread its evidence across many
+  redundant features. At inference all units are active again.
+  \item \textbf{Batch normalisation} after every convolution. BatchNorm re-centres and
+  re-scales each layer's activations, which keeps signals in the responsive middle of
+  the nonlinearity (avoiding the dead saturated tails), steadies the gradients, and
+  lets training use a larger, faster learning rate.
+\end{itemize}
+The tell-tale sign of over-fitting is a \emph{gap}: the training loss keeps falling
+while performance on held-out data stops improving --- or worsens. We therefore watch a
+validation metric every epoch and keep the checkpoint that is best on data the network
+was \emph{not} trained on, a practice called \textbf{early stopping}.
+
+\begin{figure}[t]
+  \centering
+  \begin{subfigure}[t]{0.55\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{train_curve}
+    \caption{Training curve. The cross-entropy loss (red) falls epoch after epoch while
+    validation sensitivity and specificity climb. The starred epoch is the best
+    validation checkpoint --- the weights that actually ship.}
+    \label{fig:train}
+  \end{subfigure}\hfill
+  \begin{subfigure}[t]{0.43\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{calibration}
+    \caption{Reliability diagram (glass-box model). Points on the dashed line mean a
+    stated probability matches the observed freeze frequency; the histogram shows how
+    many windows land in each confidence bin.}
+    \label{fig:calib}
+  \end{subfigure}
+  \caption{Watching learning happen (left) and checking the probabilities are honest
+  (right). Early stopping reads off the left panel; threshold choice reads off the
+  right.}
+  \label{fig:train_calib}
+\end{figure}
+
+Figure~\ref{fig:train_calib} (left) is FoGNet's actual training run on the Daphnet
+ankle data: loss slides down as the validation sensitivity and specificity rise, and
+the highlighted epoch marks the checkpoint with the best validation balance --- the one
+that ships rather than the lowest-loss one.
+
+\subsection{Evaluating without fooling ourselves: Leave-One-Subject-Out}
+
+This is the most important methodological decision in the whole pipeline, and the
+easiest to get catastrophically wrong. The obvious way to test a model is to shuffle all
+the windows, hold back a random fraction, train on the rest, and report the score on the
+held-back part. For freeze detection this is a \emph{trap}.
+
+\begin{keyidea}
+\textbf{A random window split leaks the person, not the freeze.} Consecutive 4-second
+windows from one patient overlap and share that individual's gait fingerprint --- their
+stride rhythm, their tremor, the exact way their sleeve sits on the ankle. Split them
+randomly and almost every test window has a near-twin in the training set from the
+\emph{same body}. The model can then ace the test by recognising \emph{who} is walking
+rather than \emph{whether} they are freezing --- and that skill evaporates the moment a
+new patient straps the device on. The honest question is never ``can it recognise this
+patient again?'' but ``can it recognise freezing in someone it has \emph{never met}?''
+\end{keyidea}
+
+The fix is \textbf{Leave-One-Subject-Out (LOSO)} cross-validation. With $N$ patients we
+run $N$ rounds; in each, one patient is held out entirely as the test set and the model
+is trained on the other $N-1$. Every patient takes a turn as the unseen subject, and we
+pool the $N$ held-out verdicts into one confusion matrix. No window from a test patient
+ever touches training, so the score genuinely answers the generalisation question.
+Figure~\ref{fig:loso} sketches the protocol.
+
+\begin{figure}[t]
+  \centering
+  \resizebox{0.94\textwidth}{!}{%
+  \begin{tikzpicture}[font=\sffamily,
+      patient/.style={rectangle,rounded corners=2pt,minimum width=1.05cm,
+        minimum height=0.62cm,draw=rule,line width=0.5pt},
+      train/.style={patient,fill=palenavy,text=ink},
+      test/.style={patient,fill=palefreeze,draw=freeze,text=freeze,line width=0.8pt},
+      rlabel/.style={font=\normalsize\bfseries,text=navy,anchor=east}]
+
+    \def\np{8}      % patients per row
+    \def\dx{1.22}   % horizontal spacing
+
+    % three illustrative rounds + an ellipsis row
+    \foreach \round/\hold/\yy in {1/1/0, 2/2/-0.95, 3/3/-1.90} {
+      \node[rlabel] at (-0.55,\yy) {Round \round};
+      \foreach \p in {1,...,\np} {
+        \pgfmathtruncatemacro{\istest}{ifthenelse(\p==\hold,1,0)}
+        \ifnum\istest=1
+          \node[test] (n\round-\p) at ({\p*\dx},\yy) {\footnotesize P\p};
+        \else
+          \node[train] (n\round-\p) at ({\p*\dx},\yy) {\footnotesize P\p};
+        \fi
+      }
+    }
+    % ellipsis row
+    \node[rlabel] at (-0.55,-2.85) {$\vdots$};
+    \foreach \p in {1,...,\np} {
+      \node[font=\large,text=mute] at ({\p*\dx},-2.78) {$\vdots$};
+    }
+    % last round: hold out P8
+    \node[rlabel] at (-0.55,-3.75) {Round $N$};
+    \foreach \p in {1,...,\np} {
+      \pgfmathtruncatemacro{\istest}{ifthenelse(\p==8,1,0)}
+      \ifnum\istest=1
+        \node[test] at ({\p*\dx},-3.75) {\footnotesize P\p};
+      \else
+        \node[train] at ({\p*\dx},-3.75) {\footnotesize P\p};
+      \fi
+    }
+
+    % legend (stacked rows so long labels never collide; dark, legible labels —
+    % the swatch boxes carry the blue/red colour key)
+    \node[train,minimum width=0.8cm] (lg1) at (2.1,-4.95) {};
+    \node[anchor=west,font=\normalsize\bfseries,text=ink] at (2.75,-4.95)
+      {train on these $N{-}1$ patients};
+    \node[test,minimum width=0.8cm] (lg2) at (2.1,-5.85) {};
+    \node[anchor=west,font=\normalsize\bfseries,text=ink] at (2.75,-5.85)
+      {held-out test patient (never seen)};
+  \end{tikzpicture}}
+  \caption{Leave-One-Subject-Out cross-validation. Each round holds out one whole
+  patient (red) and trains on all the others (blue); rotating the held-out subject
+  through everyone measures performance on bodies the network has never met. Pooling the
+  held-out verdicts gives an unbiased confusion matrix.}
+  \label{fig:loso}
+\end{figure}
+
+Run this way, FoGNet's pooled LOSO confusion over \num{8982} held-out windows gives
+$\mathrm{TN}=\num{6842}$, $\mathrm{FP}=\num{1285}$, $\mathrm{FN}=248$,
+$\mathrm{TP}=607$ --- a sensitivity of $0.71$, specificity of $0.84$ and accuracy of
+$0.83$. These are honest, new-patient numbers, not the inflated figures a random split
+would have printed. The interpretable 9-feature glass-box alternative, evaluated under
+the same protocol, reaches sensitivity $0.75$ and specificity $0.76$ at its operating
+point, with a threshold-free ROC-AUC of $0.82$.
+
+\subsubsection*{Nested LOSO for the decision threshold}
+
+There is one more leak to seal. The decision threshold $t$ of
+Section~\ref{sec:training} is itself a parameter we tune --- and if we tune it by peeking
+at the very test patients we then report on, we have quietly leaked the answer again.
+\textbf{Nested LOSO} closes this: inside each outer round, the threshold is chosen on a
+further held-out \emph{inner} fold drawn only from the training patients, never from the
+outer test subject. The glass-box model's reported operating point ($t^\star \approx
+0.10$) is selected this way, so even the threshold is honest. The headline numbers we
+quote are therefore what a genuinely new wearer should expect, not a flattering
+self-portrait.
+
+\subsection{Calibration: do the probabilities mean what they say?}
+
+A final, subtle question: when the model says ``$\hat p = 0.7$'', do roughly $70\%$ of
+such windows actually turn out to be freezes? A model can rank windows well yet state
+\emph{mis-scaled} probabilities --- which matters, because the Freeze-Margin meter on the
+live dashboard and the choice of $t$ both assume the numbers are meaningful. We check
+this with a \textbf{reliability diagram}: bin the predictions by stated probability and
+plot, per bin, the observed freeze frequency against the predicted one.
+Figure~\ref{fig:calib} shows the glass-box model's diagram. Points hugging the diagonal
+are well calibrated; the companion histogram reveals that the vast majority of windows
+sit at low predicted probability --- unsurprising, since freezing is rare --- so the
+low-confidence bins are the ones that must be trustworthy, and they are.
+
+\begin{takeaway}
+Sigmoid turns scores into probabilities; BCE punishes confident errors; gradient descent
+finds the weights; dropout and BatchNorm stop the model memorising; and --- the part that
+makes the headline numbers believable --- \textbf{Leave-One-Subject-Out testing measures
+the freeze, not the person}. Tested honestly, FoGNet catches $71\%$ of freezes while
+leaving $84\%$ of calm gait undisturbed.
+\end{takeaway}
