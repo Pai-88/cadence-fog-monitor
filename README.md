@@ -108,9 +108,13 @@ a capture (`.csv` or Apple `.numbers`) to generate every plot.
 
 ## Team
 
-A three-person project (introduction · hardware · software & ML). *Replace this line
-with the team members' names; the signal-processing, detector, firmware-inference,
-dashboard and analysis code in this repository is the software/ML contribution.*
+A four-person ENGF0031 (Scenario 2) project:
+
+- **Paing Hein Htet** — software & ML: signal processing, freeze-index detector,
+  on-device firmware inference, dashboard, and analysis (the code in this repository)
+- **Sina** — hardware
+- **Neyla** — introduction
+- **Will** — report
 
 ## License
 
